@@ -37,7 +37,7 @@ class EntraSourceGroup extends AppModel {
       'required' => false,
       'allowEmpty' => true
     ),
-    'graph_delta_link' => array(
+    'delta_next_link' => array(
       'rule' => 'notBlank',
       'required' => false,
       'allowEmpty' => true

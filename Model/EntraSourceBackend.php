@@ -97,7 +97,7 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
 
     $response = $this->Http->$action($url, $query, $options);
 
-    $this->log("FOO response is " . print_r($response, true));
+    //$this->log("FOO response is " . print_r($response, true));
 
     if($response->code != 200) {
       $msg = _txt('er.entrasource.api.code', array($response->code));
@@ -121,7 +121,9 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
    */
 
   public function groupableAttributes() {
+    // Not currently supported.
 
+    return array();
   }
   
   /**
@@ -325,8 +327,68 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
    */
   
   public function resultToGroups($raw) {
+    // Not currently supported.
+
+    return array();
   }
 
+  /**
+   */
+
+  protected function resultToOrgIdentity($result, $extensions = array()) {
+
+    $record = json_decode($result, true, 512, JSON_THROW_ON_ERROR);
+
+    $orgdata = array();
+
+    $orgdata['OrgIdentity'] = array();
+
+    $orgdata['OrgIdentity']['affiliation'] = AffiliationEnum::Member;
+
+    $orgdata['Name'] = array();
+
+    if(!empty($record['givenName'])) {
+      $orgdata['Name'][0]['given'] = $record['givenName'];
+    }
+
+    if(!empty($record['surname'])) {
+      $orgdata['Name'][0]['family'] = $record['surname'];
+    }
+
+    if(!empty($orgdata['Name'][0])) {
+      $orgdata['Name'][0]['type'] = NameEnum::Official;
+      $orgdata['Name'][0]['primary_name'] = true;
+    }
+
+    if(!empty($record['mail'])) {
+      $orgdata['EmailAddress'][0]['mail'] = $record['mail'];
+      $orgdata['EmailAddress'][0]['type'] = EmailAddressEnum::Official;
+    }
+
+    $orgdata['Identifier'][0] = array(
+      'identifier' => $record['id'],
+      'type' => IdentifierEnum::SORID,
+      'status' => SuspendableStatusEnum::Active
+    );
+
+    foreach($extensions as $e) {
+      $property = $e['EntraSourceExtensionProperty']['property'];
+      if(!empty($record[$property])) {
+        if(is_array($record[$property])) {
+          $identifier = $record[$property][0];
+        } else {
+          $identifier = $record[$property];
+        }
+        $orgdata['Identifier'][] = array(
+          'identifier' => $identifier,
+          'type' => $e['EntraSourceExtensionProperty']['identifier_type'],
+          'status' => SuspendableStatusEnum::Active
+        );
+      }
+    }
+
+    return $orgdata;
+  }
 
   /**
    * Retrieve a single record from the IdentitySource. The return array consists
@@ -342,6 +404,126 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
    */
   
   public function retrieve($id) {
+    try {
+      $this->apiConnect();
+    } catch(InvalidArgumentException $e) {
+      // TODO
+    }
+
+    $cfg = $this->getConfig();
+
+    $args = array();
+    $args['conditions']['EntraSourceRecord.entra_source_id'] = $cfg['id'];
+    $args['conditions']['EntraSourceRecord.graph_id'] = $id;
+    $args['contain'] = false;
+
+    $EntraSource = new EntraSource();
+
+    $record = $EntraSource->EntraSourceRecord->find('first', $args);
+
+    if(empty($record)) {
+      throw new InvalidArgumentException(_txt('er.notfound', array(_txt('fd.sorid'), $id)));
+    }
+
+    $this->log("FOO record is " . print_r($record, true));
+
+    // Pull extension properties if any.
+    $args = array();
+    $args['conditions']['EntraSourceExtensionProperty.entra_source_id'] = $cfg['id'];
+    $args['contain'] = false;
+
+    $extensions = $EntraSource->EntraSourceExtensionProperty->find('all', $args);
+
+    $this->log("FOO extensions is " . print_r($extensions, true));
+
+
+
+    $done = false;
+
+    while(!$done) {
+      $query = array();
+
+      if(!empty($record['EntraSourceRecord']['delta_next_link'])) {
+        $urlPath = $record['EntraSourceRecord']['delta_next_link'];
+      } elseif(!empty($record['EntraSourceRecord']['graph_next_link'])) {
+        $urlPath = $record['EntraSourceRecord']['graph_next_link'];
+      } else {
+        $urlPath = "users/delta";
+
+        $select = array('id', 'givenName', 'surname', 'mail');
+        foreach($extensions as $e) {
+          $select[] = $e['EntraSourceExtensionProperty']['property'];
+        }
+
+        $this->log("FOO select is " . print_r($select, true));
+
+        $query = array(
+          '$select' => implode(',', $select),
+          '$filter' => "id eq '$id'"
+        );
+      }
+
+      $this->log("FOO urlPath is $urlPath");
+      $this->log("FOO query is " . print_r($query, true));
+
+      $body = $this->apiRequest($urlPath, $query);
+
+      $this->log("FOO body is " . print_r($body, true));
+
+      if(!empty($body['value'][0])) {
+        $EntraSource->EntraSourceRecord->clear();
+        $EntraSource->EntraSourceRecord->id = $record['EntraSourceRecord']['id'];
+
+        $sourceRecord = json_encode($body['value'][0]);
+        $EntraSource->EntraSourceRecord->saveField('source_record', $sourceRecord);
+        $record['EntraSourceRecord']['source_record'] = $sourceRecord;
+      } elseif(!empty($body['@odata.deltaLink'])) {
+        $done = true;
+      }
+
+      // Update nextLink or deltaLink
+      if(!empty($body['@odata.nextLink'])) {
+        $EntraSource->EntraSourceRecord->clear();
+        $EntraSource->EntraSourceRecord->id = $record['EntraSourceRecord']['id'];
+
+        $this->log("FOO saving next link now...");
+        $ret = $EntraSource->EntraSourceRecord->saveField('graph_next_link', $body['@odata.nextLink']);
+        if(!$ret) {
+          $this->log("FOO validation errors is " . print_r($EntraSource->EntraSourceRecord->validationErrors, true));
+        }
+
+        $record['EntraSourceRecord']['graph_next_link'] = $body['@odata.nextLink'];
+      } elseif(!empty($body['@odata.deltaLink'])) {
+        $EntraSource->EntraSourceRecord->clear();
+        $EntraSource->EntraSourceRecord->id = $record['EntraSourceRecord']['id'];
+
+        $this->log("FOO saving delta link now...");
+        $ret = $EntraSource->EntraSourceRecord->saveField('delta_next_link', $body['@odata.deltaLink']);
+        if(!$ret) {
+          $this->log("FOO validation errors is " . print_r($EntraSource->EntraSourceRecord->validationErrors, true));
+        }
+
+        $this->log("FOO clearing next link now...");
+        $ret = $EntraSource->EntraSourceRecord->saveField('graph_next_link', null);
+        if(!$ret) {
+          $this->log("FOO validation errors is " . print_r($EntraSource->EntraSourceRecord->validationErrors, true));
+        }
+
+        $record['EntraSourceRecord']['delta_next_link'] = $body['@odata.deltaLink'];
+        $record['EntraSourceRecord']['graph_next_link'] = null;
+      }
+    }
+
+    $raw = $record['EntraSourceRecord']['source_record'];
+    $orgId = $this->resultToOrgIdentity($raw, $extensions);
+
+    $this->log("FOO raw is " . print_r($raw, true));
+    $this->log("FOO orgId is " . print_r($orgId, true));
+
+    return array(
+      'raw' => $raw,
+      'orgidentity' => $orgId
+    );
 
   }
 

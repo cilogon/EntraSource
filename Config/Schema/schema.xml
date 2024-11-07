@@ -72,4 +72,18 @@
       <col>graph_id</col>
     </index>
   </table>
+
+  <table name="entra_source_extension_properties">
+    <field name="id" type="I">
+      <key />
+      <autoincrement />
+    </field>
+    <field name="entra_source_id" type="I">
+      <constraint>REFERENCES cm_entra_sources(id)</constraint>
+    </field>
+    <field name="property" type="C" size="256" />
+    <field name="identifier_type" type="C" size="32" />
+    <field name="created" type="T" />
+    <field name="modified" type="T" />
+  </table>
 </schema>

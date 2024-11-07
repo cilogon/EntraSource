@@ -18,7 +18,8 @@ class EntraSource extends AppModel {
 
   public $hasMany = array(
     "EntraSourceRecord" => array('dependent' => true),
-    "EntraSourceGroup" => array('dependent' => true)
+    "EntraSourceGroup" => array('dependent' => true),
+    "EntraSourceExtensionProperty" => array('dependent' => true)
   );
 
   // Default display field for cake generated views
