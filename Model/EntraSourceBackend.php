@@ -97,7 +97,7 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
 
     $response = $this->Http->$action($url, $query, $options);
 
-    //$this->log("FOO response is " . print_r($response, true));
+    // TODO manage throttling. See https://learn.microsoft.com/en-us/graph/throttling
 
     if($response->code != 200) {
       $msg = _txt('er.entrasource.api.code', array($response->code));
@@ -235,8 +235,30 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
 
                   $EntraSource->EntraSourceRecord->clear();
                   $EntraSource->EntraSourceRecord->save($data);
+                  $recordId = $EntraSource->EntraSourceRecord->id;
 
                   $this->log("FOO saved source record " . print_r($data, true));
+                } else {
+                  $recordId = $sourceRecord['EntraSourceRecord']['id'];
+                }
+
+                // Record the Entra group membership if necessary.
+                $args = array();
+                $args['conditions']['EntraSourceGroupMembership.entra_source_group_id'] = $g['EntraSourceGroup']['id'];
+                $args['conditions']['EntraSourceGroupMembership.entra_source_record_id'] = $recordId;
+                $args['contains'] = false;
+
+                $membership = $EntraSource->EntraSourceGroup->EntraSourceGroupMembership->find('first', $args);
+
+                if(empty($membership)) {
+                  $data = array();
+                  $data['EntraSourceGroupMembership']['entra_source_group_id'] = $g['EntraSourceGroup']['id'];
+                  $data['EntraSourceGroupMembership']['entra_source_record_id'] = $recordId;
+
+                  $EntraSource->EntraSourceGroup->EntraSourceGroupMembership->clear();
+                  $EntraSource->EntraSourceGroup->EntraSourceGroupMembership->save($data);
+
+                  $this->log("FOO saved group membership " . print_r($data, true));
                 }
               }
             }
@@ -363,11 +385,19 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
     if(!empty($record['mail'])) {
       $orgdata['EmailAddress'][0]['mail'] = $record['mail'];
       $orgdata['EmailAddress'][0]['type'] = EmailAddressEnum::Official;
+      $orgdata['EmailAddress'][0]['verified'] = true;
     }
 
     $orgdata['Identifier'][0] = array(
       'identifier' => $record['id'],
       'type' => IdentifierEnum::SORID,
+      'status' => SuspendableStatusEnum::Active
+    );
+
+    // TODO make the type configuration.
+    $orgdata['Identifier'][1] = array(
+      'identifier' => $record['userPrincipalName'],
+      'type' => 'upn',
       'status' => SuspendableStatusEnum::Active
     );
 
@@ -449,8 +479,7 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
         $urlPath = $record['EntraSourceRecord']['graph_next_link'];
       } else {
         $urlPath = "users/delta";
-
-        $select = array('id', 'givenName', 'surname', 'mail');
+        $select = array('id', 'givenName', 'surname', 'mail', 'userPrincipalName');
         foreach($extensions as $e) {
           $select[] = $e['EntraSourceExtensionProperty']['property'];
         }
@@ -552,6 +581,7 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
    */
   
   public function searchableAttributes() {
+    return array();
   }
   
 }

@@ -1,17 +1,13 @@
 <?php
 
-class EntraSourceRecord extends AppModel {
+class EntraSourceExtensionProperty extends AppModel {
   // Association rules from this model to other models
   public $belongsTo = array(
     "EntraSource.EntraSource"
   );
 
-  public $hasMany = array(
-    "EntraSource.EntraSourceGroupMembership" => array('dependent' => true)
-  );
-
   // Default display fied for cake generated views
-  public $displayField = "graph_id";
+  public $displayField = "property";
 
   public $actsAs = array('Containable');
 
@@ -22,25 +18,15 @@ class EntraSourceRecord extends AppModel {
       'required' => true,
       'allowEmpty' => false
     ),
-    'graph_id' => array(
+    'property' => array(
       'rule' => 'notBlank',
       'required' => true,
       'allowEmpty' => false
     ),
-    'source_record' => array(
+    'identifier_type' => array(
       'rule' => 'notBlank',
-      'required' => false,
-      'allowEmpty' => true
-    ),
-    'graph_next_link' => array(
-      'rule' => 'notBlank',
-      'required' => false,
-      'allowEmpty' => true
-    ),
-    'graph_delta_link' => array(
-      'rule' => 'notBlank',
-      'required' => false,
-      'allowEmpty' => true
+      'required' => true,
+      'allowEmpty' => false
     )
   );
 

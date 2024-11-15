@@ -28,6 +28,20 @@
     </index>
   </table>
 
+  <table name="entra_source_extension_properties">
+    <field name="id" type="I">
+      <key />
+      <autoincrement />
+    </field>
+    <field name="entra_source_id" type="I">
+      <constraint>REFERENCES cm_entra_sources(id)</constraint>
+    </field>
+    <field name="property" type="C" size="256" />
+    <field name="identifier_type" type="C" size="32" />
+    <field name="created" type="T" />
+    <field name="modified" type="T" />
+  </table>
+
   <table name="entra_source_groups">
     <field name="id" type="I">
       <key />
@@ -73,17 +87,24 @@
     </index>
   </table>
 
-  <table name="entra_source_extension_properties">
+  <table name="entra_source_group_memberships">
     <field name="id" type="I">
       <key />
       <autoincrement />
     </field>
-    <field name="entra_source_id" type="I">
-      <constraint>REFERENCES cm_entra_sources(id)</constraint>
+    <field name="entra_source_group_id" type="I" >
+      <constraint>REFERENCES cm_entra_source_groups(id)</constraint>
     </field>
-    <field name="property" type="C" size="256" />
-    <field name="identifier_type" type="C" size="32" />
+    <field name="entra_source_record_id" type="I" >
+      <constraint>REFERENCES cm_entra_source_records(id)</constraint>
+    </field>
     <field name="created" type="T" />
     <field name="modified" type="T" />
+
+    <index name="entra_source_group_memberships_i1">
+      <col>entra_source_group_id</col>
+      <col>entra_source_record_id</col>
+    </index>
   </table>
+
 </schema>

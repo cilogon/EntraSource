@@ -12,6 +12,10 @@ class EntraSourceGroup extends AppModel {
     "EntraSource.EntraSource"
   );
 
+  public $hasMany = array(
+    "EntraSource.EntraSourceGroupMembership" => array('dependent' => true)
+  );
+
   // Default display field for cake generated views
   public $displayField = "mail_nickname";
 
