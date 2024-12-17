@@ -307,7 +307,9 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
       //
       // See https://learn.microsoft.com/en-us/graph/api/group-delta?view=graph-rest-1.0&tabs=http
 
-      if(!empty($g['EntraSourceGroup']['delta_next_link'])) {
+      if(!empty($g['EntraSourceGroup']['delta_next_link']) &&
+         // Cannot use a delta link that is older than 30 days.
+         (time() - strtotime($g['EntraSourceGroup']['modified']) < 2592000 )) {
         $urlPath = $g['EntraSourceGroup']['delta_next_link'];
       } elseif(!empty($g['EntraSourceGroup']['graph_next_link'])) {
         $urlPath = $g['EntraSourceGroup']['graph_next_link'];
@@ -320,7 +322,7 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
       }
 
       $body = $this->apiRequest($urlPath, $query);
-      $this->log("Route groups/delete returned body " . print_r($body, true));
+      $this->log("Route groups/delta returned body " . print_r($body, true));
 
       if(!empty($body['value'])) {
         if(!empty($body['value'][0]['members@delta'])) {
