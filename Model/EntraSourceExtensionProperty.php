@@ -29,6 +29,4 @@ class EntraSourceExtensionProperty extends AppModel {
       'allowEmpty' => false
     )
   );
-
-
 }

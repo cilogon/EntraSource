@@ -8,11 +8,74 @@ App::uses('Server', 'Model');
 class EntraSourceBackend extends OrgIdentitySourceBackend {
   public $name = "EntraSourceBackend";
 
-
+  // Cache the access token server configuration.
   protected $accessTokenServer = null;
+
+  // Cache the API server configuration.
   protected $apiServer = null;
 
+  // Cache the instance ID, used in logging.
+  protected $activeId = null;
+
   /**
+   * Add a source record.
+   *
+   * @since  COmanage Registry v4.4.0
+   * @param  String $graphId Graph API ID for user
+   * @param  Integer $entraSourceId EntraSource ID
+   * @param  Integer $entraSourceGroupId EntraSourceGroup ID
+   * @return Null
+   */
+
+  protected function addSourceRecord($graphId, $entraSourceId, $entraSourceGroupId) {
+    $args = array();
+    $args['conditions']['EntraSourceRecord.graph_id'] = $graphId;
+    $args['conditions']['EntraSourceRecord.entra_source_id'] = $entraSourceId;
+    $args['contains'] = false;
+
+    $EntraSource = new EntraSource();
+    $sourceRecord = $EntraSource->EntraSourceRecord->find('first', $args);
+
+    if(empty($sourceRecord)) {
+      $data = array();
+      $data['EntraSourceRecord']['entra_source_id'] = $entraSourceId;
+      $data['EntraSourceRecord']['graph_id'] = $graphId;
+
+      $EntraSource->EntraSourceRecord->clear();
+      $EntraSource->EntraSourceRecord->save($data);
+      $recordId = $EntraSource->EntraSourceRecord->id;
+
+      $this->log("Saved source record " . print_r($data, true));
+    } else {
+      $recordId = $sourceRecord['EntraSourceRecord']['id'];
+    }
+
+    // Record the Entra group membership if necessary.
+    $args = array();
+    $args['conditions']['EntraSourceGroupMembership.entra_source_group_id'] = $entraSourceGroupId;
+    $args['conditions']['EntraSourceGroupMembership.entra_source_record_id'] = $recordId;
+    $args['contains'] = false;
+
+    $membership = $EntraSource->EntraSourceGroup->EntraSourceGroupMembership->find('first', $args);
+
+    if(empty($membership)) {
+      $data = array();
+      $data['EntraSourceGroupMembership']['entra_source_group_id'] = $entraSourceGroupId;
+      $data['EntraSourceGroupMembership']['entra_source_record_id'] = $recordId;
+
+      $EntraSource->EntraSourceGroup->EntraSourceGroupMembership->clear();
+      $EntraSource->EntraSourceGroup->EntraSourceGroupMembership->save($data);
+
+      $this->log("Saved group membership " . print_r($data, true));
+    }
+  }
+
+  /**
+   * Establish a connection to the API server.
+   *
+   * @since  COmanage Registry v4.4.0
+   * @return Boolean true on success
+   * @throws InvalidArgumentException
    */
 
   protected function apiConnect() {
@@ -50,22 +113,23 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
   }
 
   /**
+   * Make a request to the API server.
+   *
+   * @since  COmanage Registry v4.4.0
+   * @param  String $urlPath  URL Path to request from API
+   * @param  Array  $query    Array of query parameters
+   * @param  String $action   HTTP action
+   * @return Array  Decoded json message body
+   * @throws RuntimeException
    */
 
-  protected function apiRequest($urlPath, $query, $action="get") {
+  protected function apiRequest($urlPath, $query=array(), $action="get") {
     $EntraSource = new EntraSource();
     $atServerId = $this->accessTokenServer['Oauth2Server']['id'];
 
+    // Will the access token expire within the next ten seconds?
     $deltat = 10;
     $expired = $EntraSource->Server->Oauth2Server->isExpired($atServerId, $deltat);
-
-    if($expired === null) {
-      $this->log("FOO expired is null");
-    } elseif ($expired === true) {
-      $this->log("FOO expired is true");
-    } elseif ($expired === false) {
-      $this->log("FOO expired is false");
-    }
 
     if($expired === true || $expired === null) {
       $data = $EntraSource->Server->Oauth2Server->obtainToken($atServerId, 'client_credentials');
@@ -116,13 +180,12 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
    * only return a non-empty array if they wish to take advantage of the automatic
    * group mapping service.
    *
-   * @since  COmanage Registry v2.0.0
+   * @since  COmanage Registry v4.4.0
    * @return Array As specified
    */
 
   public function groupableAttributes() {
     // Not currently supported.
-
     return array();
   }
   
@@ -130,42 +193,51 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
    * Obtain all available records in the IdentitySource, as a list of unique keys
    * (ie: suitable for passing to retrieve()).
    *
-   * @since  COmanage Registry v2.0.0
+   * @since  COmanage Registry v4.4.0
    * @return Array Array of unique keys
    * @throws DomainException If the backend does not support this type of requests
    */
   
   public function inventory() {
-    try {
-      $this->apiConnect();
-    } catch(InvalidArgumentException $e) {
-      // TODO
-    }
+    $this->apiConnect();
 
     $cfg = $this->getConfig();
 
     if($cfg['use_source_groups']) {
+      // If configured use group memberships to determine the inventory.
       return $this->inventoryBySourceGroups();
     } else {
+      // Else find all users to determine the inventory.
       return $this->inventoryAllUsers();
     }
   }
 
   /**
+   * Obtain all available records from the API server, as a list of unique keys
+   * (ie: suitable for passing to retrieve()).
+   *
+   * @since  COmanage Registry v4.4.0
+   * @return Array Array of unique keys
    */
 
   protected function inventoryAllUsers() {
-    // TODO
-
+    // Not currently supported.
     return array();
   }
 
   /**
+   * Obtain all available records from the API server, as a list of unique keys
+   * (ie: suitable for passing to retrieve()), using memberships in source groups
+   * to determine the set of records in the inventory.
+   *
+   * @since  COmanage Registry v4.4.0
+   * @return Array Array of unique keys
    */
 
   protected function inventoryBySourceGroups() {
     $cfg = $this->getConfig();
 
+    // Find the source groups.
     $args = array();
     $args['conditions']['EntraSourceGroup.entra_source_id'] = $cfg['id'];
     $args['contain'] = false;
@@ -178,136 +250,13 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
       return array();
     }
 
-    $this->log("FOO sourceGroups is " . print_r($sourceGroups, true));
-
     foreach($sourceGroups as $g) {
-      if(empty($g['EntraSourceGroup']['graph_id'])) {
-        $mailNickname = $g['EntraSourceGroup']['mail_nickname'];
-        $apiId = $this->sourceGroupApiIdByNickname($mailNickname);
-
-        // Update the source group with the api ID.
-        $EntraSource->EntraSourceGroup->clear();
-        $EntraSource->EntraSourceGroup->id = $g['EntraSourceGroup']['id'];
-        $EntraSource->EntraSourceGroup->saveField('graph_id', $apiId);
-      } else {
-        $apiId = $g['EntraSourceGroup']['graph_id'];
-      }
-
-      $done = false;
-
-      while(!$done) {
-        $query = array();
-
-        if(!empty($g['EntraSourceGroup']['delta_next_link'])) {
-          $urlPath = $g['EntraSourceGroup']['delta_next_link'];
-        } elseif(!empty($g['EntraSourceGroup']['graph_next_link'])) {
-          $urlPath = $g['EntraSourceGroup']['graph_next_link'];
-        } else {
-          $urlPath = "groups/delta";
-          $query = array(
-            '$select' => 'members',
-            '$filter' => "id eq '$apiId'"
-          );
-        }
-
-        $body = $this->apiRequest($urlPath, $query);
-
-        $this->log("FOO body is " . print_r($body, true));
-
-        if(!empty($body['value'])) {
-          if(!empty($body['value'][0]['members@delta'])) {
-            foreach($body['value'][0]['members@delta'] as $m) {
-              if(array_key_exists('@removed', $m)) {
-                // TODO Remove
-              } else {
-                // Add if necessary.
-                $args = array();
-                $args['conditions']['EntraSourceRecord.graph_id'] = $m['id'];
-                $args['conditions']['EntraSourceRecord.entra_source_id'] = $g['EntraSourceGroup']['entra_source_id'];
-                $args['contains'] = false;
-
-                $sourceRecord = $EntraSource->EntraSourceRecord->find('first', $args);
-
-                if(empty($sourceRecord)) {
-                  $data = array();
-                  $data['EntraSourceRecord']['entra_source_id'] = $g['EntraSourceGroup']['entra_source_id'];
-                  $data['EntraSourceRecord']['graph_id'] = $m['id'];
-
-                  $EntraSource->EntraSourceRecord->clear();
-                  $EntraSource->EntraSourceRecord->save($data);
-                  $recordId = $EntraSource->EntraSourceRecord->id;
-
-                  $this->log("FOO saved source record " . print_r($data, true));
-                } else {
-                  $recordId = $sourceRecord['EntraSourceRecord']['id'];
-                }
-
-                // Record the Entra group membership if necessary.
-                $args = array();
-                $args['conditions']['EntraSourceGroupMembership.entra_source_group_id'] = $g['EntraSourceGroup']['id'];
-                $args['conditions']['EntraSourceGroupMembership.entra_source_record_id'] = $recordId;
-                $args['contains'] = false;
-
-                $membership = $EntraSource->EntraSourceGroup->EntraSourceGroupMembership->find('first', $args);
-
-                if(empty($membership)) {
-                  $data = array();
-                  $data['EntraSourceGroupMembership']['entra_source_group_id'] = $g['EntraSourceGroup']['id'];
-                  $data['EntraSourceGroupMembership']['entra_source_record_id'] = $recordId;
-
-                  $EntraSource->EntraSourceGroup->EntraSourceGroupMembership->clear();
-                  $EntraSource->EntraSourceGroup->EntraSourceGroupMembership->save($data);
-
-                  $this->log("FOO saved group membership " . print_r($data, true));
-                }
-              }
-            }
-          }
-        } else {
-          $done = true;
-        }
-
-        // Update nextLink or deltaLink
-        if(!empty($body['@odata.nextLink'])) {
-          $EntraSource->EntraSourceGroup->clear();
-          $EntraSource->EntraSourceGroup->id = $g['EntraSourceGroup']['id'];
-
-          $this->log("FOO saving next link now...");
-          $ret = $EntraSource->EntraSourceGroup->saveField('graph_next_link', $body['@odata.nextLink']);
-          if(!$ret) {
-            $this->log("FOO validation errors is " . print_r($EntraSource->EntraSourceGroup->validationErrors, true));
-          }
-
-          $g['EntraSourceGroup']['graph_next_link'] = $body['@odata.nextLink'];
-        } elseif(!empty($body['@odata.deltaLink'])) {
-          $EntraSource->EntraSourceGroup->clear();
-          $EntraSource->EntraSourceGroup->id = $g['EntraSourceGroup']['id'];
-
-          $this->log("FOO saving delta link now...");
-          $ret = $EntraSource->EntraSourceGroup->saveField('delta_next_link', $body['@odata.deltaLink']);
-          if(!$ret) {
-            $this->log("FOO validation errors is " . print_r($EntraSource->EntraSourceGroup->validationErrors, true));
-          }
-
-          $this->log("FOO clearing next link now...");
-          $ret = $EntraSource->EntraSourceGroup->saveField('graph_next_link', null);
-          if(!$ret) {
-            $this->log("FOO validation errors is " . print_r($EntraSource->EntraSourceGroup->validationErrors, true));
-          }
-
-          $g['EntraSourceGroup']['delta_next_link'] = $body['@odata.deltaLink'];
-          $g['EntraSourceGroup']['graph_next_link'] = null;
-        }
-
-
-
-      }
-
-
+      $this->inventoryOneSourceGroup($g);
     }
 
     // At this point we have looped over all the source groups and so
-    // we should have an up-to-date set of source records.
+    // we should have an up-to-date set of EntraSourceRecords, so query
+    // to find them all.
 
     $args = array();
     $args['fields'] = array('id', 'graph_id');
@@ -316,24 +265,130 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
     $inventory = $EntraSource->EntraSourceRecord->find('list', $args);
 
     return array_values($inventory);
-
-
   }
 
   /**
+   * Obtain records from the API server using memberships in one source group
+   * and create (or remove) EntraSourceRecord objects and EntraSourceGroupMembership
+   * objects.
+   *
+   * @since  COmanage Registry v4.4.0
+   * @param  Array $g EntraSourceGroup object
+   * @return Null
+   */
+
+  protected function inventoryOneSourceGroup($g) {
+    $EntraSource = new EntraSource();
+
+    if(empty($g['EntraSourceGroup']['graph_id'])) {
+      // If the graph_id for the Entra group is not recorded yet
+      // exchange the mail_nickname for the graph_id.
+      $mailNickname = $g['EntraSourceGroup']['mail_nickname'];
+      $apiId = $this->sourceGroupApiIdByNickname($mailNickname);
+
+      // Update the source group with the api ID.
+      $EntraSource->EntraSourceGroup->clear();
+      $EntraSource->EntraSourceGroup->id = $g['EntraSourceGroup']['id'];
+      $EntraSource->EntraSourceGroup->saveField('graph_id', $apiId);
+    } else {
+      $apiId = $g['EntraSourceGroup']['graph_id'];
+    }
+
+    // We use the paging functionaity of the groups/delta route and
+    // loop until there are no more memberships to process.
+    $done = false;
+
+    while(!$done) {
+      $query = array();
+
+      // Use the delta link if available to query for the next set of
+      // changes, or the next link if there are still pages to read.
+      // Otherwise start a new delta query.
+      //
+      // See https://learn.microsoft.com/en-us/graph/api/group-delta?view=graph-rest-1.0&tabs=http
+
+      if(!empty($g['EntraSourceGroup']['delta_next_link'])) {
+        $urlPath = $g['EntraSourceGroup']['delta_next_link'];
+      } elseif(!empty($g['EntraSourceGroup']['graph_next_link'])) {
+        $urlPath = $g['EntraSourceGroup']['graph_next_link'];
+      } else {
+        $urlPath = "groups/delta";
+        $query = array(
+          '$select' => 'members',
+          '$filter' => "id eq '$apiId'"
+        );
+      }
+
+      $body = $this->apiRequest($urlPath, $query);
+      $this->log("Route groups/delete returned body " . print_r($body, true));
+
+      if(!empty($body['value'])) {
+        if(!empty($body['value'][0]['members@delta'])) {
+          foreach($body['value'][0]['members@delta'] as $m) {
+            if(array_key_exists('@removed', $m)) {
+              // TODO handle membership being removed
+            } else {
+              $this->addSourceRecord($m['id'], $g['EntraSourceGroup']['entra_source_id'], $g['EntraSourceGroup']['id']);
+            }
+          }
+        }
+      } else {
+        $done = true;
+      }
+
+      // Update nextLink or deltaLink
+      if(!empty($body['@odata.nextLink'])) {
+        $EntraSource->EntraSourceGroup->clear();
+        $EntraSource->EntraSourceGroup->id = $g['EntraSourceGroup']['id'];
+        $EntraSource->EntraSourceGroup->saveField('graph_next_link', $body['@odata.nextLink']);
+
+        $g['EntraSourceGroup']['graph_next_link'] = $body['@odata.nextLink'];
+      } elseif(!empty($body['@odata.deltaLink'])) {
+        $EntraSource->EntraSourceGroup->clear();
+        $EntraSource->EntraSourceGroup->id = $g['EntraSourceGroup']['id'];
+        $EntraSource->EntraSourceGroup->saveField('delta_next_link', $body['@odata.deltaLink']);
+        $EntraSource->EntraSourceGroup->saveField('graph_next_link', null);
+
+        $g['EntraSourceGroup']['delta_next_link'] = $body['@odata.deltaLink'];
+        $g['EntraSourceGroup']['graph_next_link'] = null;
+      }
+    }
+  }
+
+  /**
+   * Log output from this backend.
+   *
+   * @since  COmanage Registry v4.4.0
+   * @return bool Success of log write
+   */
+
+  public function log($msg, $type = LOG_ERR, $scope=null) {
+    if(empty($this->activeId)) {
+      $cfg = $this->getConfig();
+      $this->activeId = $cfg['id'];
+    }
+
+    $prefix = "EntraSourceBackend ID " . $this->activeId . ": ";
+
+    return parent::log($prefix . $msg, $type, $scope);
+  }
+
+  /**
+   * Use a source group mail nickname to find the Graph API ID
+   * for the source group.
+   *
+   * @since  COmanage Registry 4.4.0
+   * @param  String $mailNickname mail nickname for the source group
+   * @return String Graph API ID for the source group
    */
 
   protected function sourceGroupApiIdByNickname($mailNickname) {
-
     $urlPath = "groups/";
     $query = array(
       '$filter' => "mailNickname eq '$mailNickname'"
     );
 
     $body = $this->apiRequest($urlPath, $query);
-
-    $this->log("FOO body is " . print_r($body, true));
-
     $apiId = $body['value'][0]['id'];
 
     return $apiId;
@@ -355,16 +410,22 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
   }
 
   /**
+   * Convert the Graph API record for a user to OrgIdentity format.
+   *
+   * @since  COmanage Registry v4.4.0
+   * @param  String $result Graph API record string in JSON format
+   * @param  Array $extensions array of EntraSourceExtensionProperty objects
+   * @return Array in OrgIdentity format
    */
 
   protected function resultToOrgIdentity($result, $extensions = array()) {
-
+    // Decode the JSON string to an array.
     $record = json_decode($result, true, 512, JSON_THROW_ON_ERROR);
 
     $orgdata = array();
-
     $orgdata['OrgIdentity'] = array();
 
+    // TODO affiliation should be configurable.
     $orgdata['OrgIdentity']['affiliation'] = AffiliationEnum::Member;
 
     $orgdata['Name'] = array();
@@ -378,12 +439,14 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
     }
 
     if(!empty($orgdata['Name'][0])) {
+      // TODO Name type should be configurable.
       $orgdata['Name'][0]['type'] = NameEnum::Official;
       $orgdata['Name'][0]['primary_name'] = true;
     }
 
     if(!empty($record['mail'])) {
       $orgdata['EmailAddress'][0]['mail'] = $record['mail'];
+      // TODO EmailAddress type should be configurable.
       $orgdata['EmailAddress'][0]['type'] = EmailAddressEnum::Official;
       $orgdata['EmailAddress'][0]['verified'] = true;
     }
@@ -394,9 +457,9 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
       'status' => SuspendableStatusEnum::Active
     );
 
-    // TODO make the type configuration.
     $orgdata['Identifier'][1] = array(
       'identifier' => $record['userPrincipalName'],
+      // TODO Identifier type should be configurable.
       'type' => 'upn',
       'status' => SuspendableStatusEnum::Active
     );
@@ -434,12 +497,7 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
    */
   
   public function retrieve($id) {
-    try {
-      $this->apiConnect();
-    } catch(InvalidArgumentException $e) {
-      // TODO
-    }
-
+    $this->apiConnect();
     $cfg = $this->getConfig();
 
     $args = array();
@@ -455,7 +513,7 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
       throw new InvalidArgumentException(_txt('er.notfound', array(_txt('fd.sorid'), $id)));
     }
 
-    $this->log("FOO record is " . print_r($record, true));
+    $this->log("Retrieved record " . print_r($record, true));
 
     // Pull extension properties if any.
     $args = array();
@@ -464,14 +522,18 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
 
     $extensions = $EntraSource->EntraSourceExtensionProperty->find('all', $args);
 
-    $this->log("FOO extensions is " . print_r($extensions, true));
-
-
-
+    // We use the paging functionaity of the users/delta route and
+    // loop until there are no more updates to process.
     $done = false;
 
     while(!$done) {
       $query = array();
+
+      // Use the delta link if available to query for the next set of
+      // changes, or the next link if there are still pages to read.
+      // Otherwise start a new delta query.
+      //
+      // See https://learn.microsoft.com/en-us/graph/api/user-delta?view=graph-rest-1.0&tabs=http
 
       if(!empty($record['EntraSourceRecord']['delta_next_link'])) {
         $urlPath = $record['EntraSourceRecord']['delta_next_link'];
@@ -479,12 +541,15 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
         $urlPath = $record['EntraSourceRecord']['graph_next_link'];
       } else {
         $urlPath = "users/delta";
+
+        // Use the select query parameter to request the specific set of properties
+        // to be returned.
         $select = array('id', 'givenName', 'surname', 'mail', 'userPrincipalName');
+
+        // Include any extension properties also.
         foreach($extensions as $e) {
           $select[] = $e['EntraSourceExtensionProperty']['property'];
         }
-
-        $this->log("FOO select is " . print_r($select, true));
 
         $query = array(
           '$select' => implode(',', $select),
@@ -492,12 +557,8 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
         );
       }
 
-      $this->log("FOO urlPath is $urlPath");
-      $this->log("FOO query is " . print_r($query, true));
-
       $body = $this->apiRequest($urlPath, $query);
-
-      $this->log("FOO body is " . print_r($body, true));
+      $this->log("Route users/deleta returned body " . print_r($body, true));
 
       if(!empty($body['value'][0])) {
         $EntraSource->EntraSourceRecord->clear();
@@ -514,29 +575,14 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
       if(!empty($body['@odata.nextLink'])) {
         $EntraSource->EntraSourceRecord->clear();
         $EntraSource->EntraSourceRecord->id = $record['EntraSourceRecord']['id'];
-
-        $this->log("FOO saving next link now...");
         $ret = $EntraSource->EntraSourceRecord->saveField('graph_next_link', $body['@odata.nextLink']);
-        if(!$ret) {
-          $this->log("FOO validation errors is " . print_r($EntraSource->EntraSourceRecord->validationErrors, true));
-        }
 
         $record['EntraSourceRecord']['graph_next_link'] = $body['@odata.nextLink'];
       } elseif(!empty($body['@odata.deltaLink'])) {
         $EntraSource->EntraSourceRecord->clear();
         $EntraSource->EntraSourceRecord->id = $record['EntraSourceRecord']['id'];
-
-        $this->log("FOO saving delta link now...");
         $ret = $EntraSource->EntraSourceRecord->saveField('delta_next_link', $body['@odata.deltaLink']);
-        if(!$ret) {
-          $this->log("FOO validation errors is " . print_r($EntraSource->EntraSourceRecord->validationErrors, true));
-        }
-
-        $this->log("FOO clearing next link now...");
         $ret = $EntraSource->EntraSourceRecord->saveField('graph_next_link', null);
-        if(!$ret) {
-          $this->log("FOO validation errors is " . print_r($EntraSource->EntraSourceRecord->validationErrors, true));
-        }
 
         $record['EntraSourceRecord']['delta_next_link'] = $body['@odata.deltaLink'];
         $record['EntraSourceRecord']['graph_next_link'] = null;
@@ -546,14 +592,10 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
     $raw = $record['EntraSourceRecord']['source_record'];
     $orgId = $this->resultToOrgIdentity($raw, $extensions);
 
-    $this->log("FOO raw is " . print_r($raw, true));
-    $this->log("FOO orgId is " . print_r($orgId, true));
-
     return array(
       'raw' => $raw,
       'orgidentity' => $orgId
     );
-
   }
 
   /**
@@ -568,6 +610,7 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
    */
   
   public function search($attributes) {
+    // TODO
   }
   
   /**
@@ -583,5 +626,4 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
   public function searchableAttributes() {
     return array();
   }
-  
 }
