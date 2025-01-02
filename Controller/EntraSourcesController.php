@@ -89,6 +89,4 @@ class EntraSourcesController extends SOISController {
     $this->set('permissions', $p);
     return($p[$this->action]);
   }
-
-
 }

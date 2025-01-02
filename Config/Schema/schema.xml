@@ -19,6 +19,7 @@
       <constraint>REFERENCES cm_servers(id)</constraint>
     </field>
     <field name="use_source_groups" type="L" />
+    <field name="source_group_filter" type="C" size="256" />
     <field name="created" type="T" />
     <field name="modified" type="T" />
 
@@ -59,6 +60,9 @@
 
     <index name="entra_source_groups_i1">
       <col>org_identity_source_id</col>
+    </index>
+    <index name="entra_source_groups_i2">
+      <col>graph_id</col>
       <unique />
     </index>
 

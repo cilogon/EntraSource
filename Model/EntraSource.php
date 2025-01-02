@@ -48,6 +48,11 @@ class EntraSource extends AppModel {
       'rule' => 'boolean',
       'required' => false,
       'allowEmpty' => true
+    ),
+    'source_group_filter' => array(
+      'rule' => 'notBlank',
+      'required' => false,
+      'allowEmpty' => true
     )
   );
 
@@ -62,12 +67,4 @@ class EntraSource extends AppModel {
   public function cmPluginMenus() {
     return array();
   }
-
-
-
-
-
-
-
-
 }

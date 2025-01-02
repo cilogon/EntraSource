@@ -126,6 +126,28 @@
     </div>
   </li>
 
+  <li>
+    <div class="field-name">
+      <div class="field-title">
+        <?php print _txt('pl.entrasource.source_group_filter'); ?><br />
+        <span class="descr"><?php print _txt('pl.entrasource.source_group_filter.desc'); ?></span>
+      </div>
+    </div>
+    <div class="field-info">
+      <?php
+        if($e) {
+          print $this->Form->input('source_group_filter');
+
+          if($this->Form->isFieldError('source_group_filter')) {
+            print $this->Form->error('source_group_filter');
+          }
+        } else {
+          print filter_var($entra_sources[0]['EntraSource']['source_group_filter'] , FILTER_SANITIZE_SPECIAL_CHARS);
+        }
+      ?>
+    </div>
+  </li>
+
 
   <?php if($e): ?>
   <li class="fields-submit">
