@@ -142,16 +142,39 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
       $url = $urlBase . '/' . $urlPath;
     }
 
-    $response = $this->Http->$action($url, $query, $options);
+    $throttled = false;
 
-    // TODO manage throttling. See https://learn.microsoft.com/en-us/graph/throttling
+    do {
+      $response = $this->Http->$action($url, $query, $options);
 
-    if($response->code != 200) {
-      $msg = _txt('er.entrasource.api.code', array($response->code));
-      $this->log($msg);
-      $this->log($response->body);
-      throw new RuntimeException($msg);
-    }
+      // See https://learn.microsoft.com/en-us/graph/throttling
+      if($response->code == 429) {
+        $throttled = true;
+        $this->log(_txt('er.entrasource.api.throttled'));
+
+        try {
+          $sleep = (int) $response->getHeader('Retry-After');
+          $this->log(_txt('er.entrasource.api.throttled.retry', array($sleep)));
+        } catch (Exception $e) {
+          $sleep = 5;
+          $this->log(_txt('er.entrasource.api.throttled.retry.error'));
+        }
+
+        $this->log(_txt('er.entrasource.api.throttled.retry.sleep', array($sleep)));
+        sleep($sleep);
+        $this->log(_txt('er.entrasource.api.throttled.retry.sleep.awake', array($sleep)));
+      } else {
+        $throttled = false;
+      }
+
+      if($response->code != 200 && !$throttled) {
+        $msg = _txt('er.entrasource.api.code', array($response->code));
+        $this->log($msg);
+        $this->log($response->body);
+        throw new RuntimeException($msg);
+      }
+
+    } while ($throttled == true);
 
     return json_decode($response->body, true, 512, JSON_THROW_ON_ERROR);
   }
@@ -684,7 +707,7 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
       }
 
       $body = $this->apiRequest($urlPath, $query);
-      $this->log("Route users/deleta returned body " . print_r($body, true));
+      $this->log("Route users/delta returned body " . print_r($body, true));
 
       if(!empty($body['value'][0])) {
         $EntraSource->EntraSourceRecord->clear();
