@@ -23,11 +23,10 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
    * @since  COmanage Registry v4.4.0
    * @param  String $graphId Graph API ID for user
    * @param  Integer $entraSourceId EntraSource ID
-   * @param  Integer $entraSourceGroupId EntraSourceGroup ID
    * @return Integer EntraSourceRecord ID
    */
 
-  protected function addSourceRecord($graphId, $entraSourceId, $entraSourceGroupId) {
+  protected function addSourceRecord($graphId, $entraSourceId) {
     $args = array();
     $args['conditions']['EntraSourceRecord.graph_id'] = $graphId;
     $args['conditions']['EntraSourceRecord.entra_source_id'] = $entraSourceId;
@@ -96,17 +95,18 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
   }
 
   /**
-   * Make a request to the API server.
+   * Make a request to the API server. 
    *
    * @since  COmanage Registry v4.4.0
    * @param  String $urlPath  URL Path to request from API
-   * @param  Array  $query    Array of query parameters
    * @param  String $action   HTTP action
+   * @param  Array  $query    Array of query parameters
+   * @param  Array  $headers  Array of additional headers. Do not include the colon.
    * @return Array  Decoded json message body
    * @throws RuntimeException
    */
 
-  protected function apiRequest($urlPath, $query=array(), $action="get") {
+  protected function apiRequest($urlPath, $action="get", $query=array(), $headers=array()) {
     $EntraSource = new EntraSource();
     $atServerId = $this->accessTokenServer['Oauth2Server']['id'];
 
@@ -133,6 +133,10 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
         'Authorization' => 'Bearer ' . $this->accessTokenServer['Oauth2Server']['access_token']
       )
     );
+
+    foreach($headers as $h => $v) {
+      $options['header'][$h] = $v;
+    }
 
     $urlBase = $this->apiServer['HttpServer']['serverurl'];
 
@@ -180,6 +184,93 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
   }
 
   /**
+   * Retrieve extension properties.
+   *
+   * @since  COmanage Registry v4.4.0
+   * @return Array Array of EntraSourceExtensionProperty objects
+   */
+
+  protected function getExtensionProperties() {
+    $EntraSource = new EntraSource();
+
+    $cfg = $this->getConfig();
+
+    $args = array();
+    $args['conditions']['EntraSourceExtensionProperty.entra_source_id'] = $cfg['id'];
+    $args['contain'] = false;
+
+    $extensions = $EntraSource->EntraSourceExtensionProperty->find('all', $args);
+
+    return $extensions;
+  }
+
+  /**
+   * Get the list of source group IDs the user is in filtered by the
+   * synchronized list of source groups. The list of source groups should
+   * have already been synchronized.
+   *
+   * @since  COmanage Registry v4.4.0
+   * @param  String $graphId Graph ID for the source record for the user
+   * @return Array list of arrays, each indexed by id, mailNickName, and entraSourceGroupId
+   */
+
+  protected function getFilteredSourceGroupsForSourceRecord($graphId) {
+    $cfg = $this->getConfig();
+
+    $EntraSource = new EntraSource();
+
+    $transitiveMemberOf = array();
+    $done = false;
+    $nextLink = null;
+
+    while(!$done) {
+      // Query for the list of transitive group memberships.
+      //
+      // See https://learn.microsoft.com/en-us/graph/api/user-list-transitivememberof?view=graph-rest-1.0&tabs=http
+      if(!empty($nextLink)) {
+        $urlPath = $nextLink;
+        $query = array();
+      } else {
+        $urlPath = "users/$graphId/transitiveMemberOf";
+        $query = array(
+          '$select' => 'id,mailNickname',
+          '$top' => '999'
+        );
+      }
+
+      $body = $this->apiRequest($urlPath, query: $query);  
+
+      if(!empty($body['@odata.nextLink'])) {
+        $nextLink = $body['@odata.nextLink'];
+      } else {
+        $nextLink = null;
+        $done = true;
+      }
+
+      if(!empty($body['value'])) {
+        foreach($body['value'] as $g) {
+          // We only want groups and not other types of directory objects.
+          if($g['@odata.type'] == '#microsoft.graph.group') {
+            $args = array();
+            $args['conditions']['EntraSourceGroup.graph_id'] = $g['id'];
+            $args['conditions']['EntraSourceGroup.entra_source_id'] = $cfg['id'];
+            $args['contain'] = false;
+
+            $sg = $EntraSource->EntraSourceGroup->find('first', $args);
+            if(!empty($sg)) {
+              $transitiveMemberOf[] = array_merge($g, array('entraSourceGroupId' => $sg['EntraSourceGroup']['id']));
+            }
+          }
+        }
+      } else {
+        $done = true;
+      }
+    }
+
+    return $transitiveMemberOf;
+  }
+
+  /**
    * Generate the set of attributes for the IdentitySource that can be used to map
    * to group memberships. The returned array should be of the form key => label,
    * where key is meaningful to the IdentitySource (eg: a number or a field name)
@@ -192,7 +283,6 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
    */
 
   public function groupableAttributes() {
-
     return array(
       'memberOf' => 'memberOf'
     );
@@ -208,17 +298,24 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
    */
   
   public function inventory() {
+    $this->log("inventory called");
+
+    // Refresh the access token if necessary.
     $this->apiConnect();
 
     $cfg = $this->getConfig();
 
     if($cfg['use_source_groups']) {
       // If configured use group memberships to determine the inventory.
-      return $this->inventoryBySourceGroups();
+      $inventory = $this->inventoryBySourceGroups();
     } else {
       // Else find all users to determine the inventory.
-      return $this->inventoryAllUsers();
+      $inventory = $this->inventoryAllUsers();
     }
+
+    $this->log("inventory is returning");
+
+    return $inventory;
   }
 
   /**
@@ -248,96 +345,8 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
 
     $EntraSource = new EntraSource();
 
-    // Use a query parameter to find all the groups if so configured.
-    if(!empty($cfg['source_group_filter'])) {
-      $entraGroups = array();
-      $done = false;
-      $nextLink = null;
-
-      while(!$done) {
-        $query = array();
-
-        // Query for the list of groups using the configured query parameter, which will
-        // probably be a filter on mailNickname. We cannot use the /delta functionality
-        // for this particular route.
-        //
-        // See https://learn.microsoft.com/en-us/graph/api/group-list?view=graph-rest-1.0&tabs=http
-        if(!empty($nextLink)) {
-          $urlPath = $nextLink;
-          $query = array();
-        } else {
-          $urlPath = 'groups';
-          $query['$filter'] = $cfg['source_group_filter'];
-          $query['$select'] = 'id,mailNickname';
-          $query['$top'] = '999';
-        }
-
-        $body = $this->apiRequest($urlPath, $query);  
-        $this->log("Route $urlPath returned body " . print_r($body, true));
-
-        if(!empty($body['@odata.nextLink'])) {
-          $nextLink = $body['@odata.nextLink'];
-        } else {
-          $nextLink = null;
-          $done = true;
-        }
-
-        if(!empty($body['value'])) {
-          foreach($body['value'] as $g) {
-            $entraGroups[$g['mailNickname']] =  $g['id'];
-          }
-        } else {
-          $done = true;
-        }
-      }
-
-      // TODO remove this hard-coded additional list of groups.
-      $entraGroups['nic-cluster-admins'] = null;
-      $entraGroups['nic-cluster-admins-tier1-admin'] = null;
-      $entraGroups['nic-software-installer'] = null;
-
-      // Synchronize the list of source groups. First make sure each group
-      // returned by the Graph API query is saved as an EntraSourceGroup object.
-      foreach($entraGroups as $mailNickname => $graphId) {
-        $args = array();
-
-        $args['conditions']['EntraSourceGroup.mail_nickname'] = $mailNickname;
-        $args['conditions']['EntraSourceGroup.entra_source_id'] = $cfg['id'];
-        $args['contain']= false;
-
-        $entraSourceGroup = $EntraSource->EntraSourceGroup->find('first', $args);
-        if(empty($entraSourceGroup)) {
-          $data = array();
-
-          $data['EntraSourceGroup']['entra_source_id'] = $cfg['id'];
-          $data['EntraSourceGroup']['mail_nickname'] = $mailNickname;
-          if(!empty($graphId)) {
-            $data['EntraSourceGroup']['graph_id'] = $graphId;
-          }
-
-          $EntraSource->EntraSourceGroup->clear();
-          $EntraSource->EntraSourceGroup->save($data);
-
-          $this->log("Added EntraSourceGroup with mailNickname $mailNickname");
-        }
-      }
-
-      // Now see if we need to delete any EntraSourceGroup objects.
-      $args = array();
-      $args['conditions']['EntraSourceGroup.entra_source_id'] = $cfg['id'];
-      $args['contain'] = false;
-
-      $sourceGroups = $EntraSource->EntraSourceGroup->find('all', $args);
-
-      foreach($sourceGroups as $g) {
-        if(!array_key_exists($g['EntraSourceGroup']['mail_nickname'], $entraGroups)) {
-          $EntraSource->EntraSourceGroup->clear();
-          $EntraSource->EntraSourceGroup->delete($g['EntraSourceGroup']['id']);
-
-          $this->log("Deleted EntraSourceGroup with mailNickname " . $g['EntraSourceGroup']['mail_nickname']);
-        }
-      }
-    }
+    // Synchronize the list of source groups.
+    $this->synchronizeSourceGroups();
 
     // Find the current set of source groups.
     $args = array();
@@ -348,56 +357,6 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
 
     if(empty($sourceGroups)) {
       return array();
-    }
-
-    // Make sure we have a CO Group and a CoGroupOisMapping 
-    // for each EntraSourceGroup.
-    $args = array();
-    $args['conditions']['OrgIdentitySource.id'] = $cfg['org_identity_source_id'];
-    $args['contain'] = false;
-
-    $orgIdentitySource = $EntraSource->OrgIdentitySource->find('first', $args);
-
-    $coId = $orgIdentitySource['OrgIdentitySource']['co_id'];
-
-    foreach($sourceGroups as $sg) {
-      $args = array();
-      $args['conditions']['CoGroup.name'] = $sg['EntraSourceGroup']['mail_nickname'];
-      $args['conditions']['CoGroup.co_id'] = $coId;
-      $args['contain'] = array('CoGroupOisMapping');
-
-      $coGroup = $EntraSource->OrgIdentitySource->Co->CoGroup->find('first', $args);
-
-      if(empty($coGroup['CoGroup'])) {
-        $data= array();
-        $data['CoGroup']['co_id'] = $coId;
-        $data['CoGroup']['name'] = $sg['EntraSourceGroup']['mail_nickname'];
-        $data['CoGroup']['open'] = false;
-        $data['CoGroup']['status'] = SuspendableStatusEnum::Active;
-
-        $EntraSource->OrgIdentitySource->Co->CoGroup->clear();
-        $EntraSource->OrgIdentitySource->Co->CoGroup->save($data);
-
-        $this->log("Added CoGroup " . $data['CoGroup']['name']);
-
-        $coGroupId = $EntraSource->OrgIdentitySource->Co->CoGroup->id;
-      } else {
-        $coGroupId = $coGroup['CoGroup']['id'];
-      }
-
-      if(empty($coGroup['CoGroupOisMapping'])) {
-        $data= array();
-        $data['CoGroupOisMapping']['org_identity_source_id'] = $cfg['org_identity_source_id'];
-        $data['CoGroupOisMapping']['attribute'] = 'memberOf';
-        $data['CoGroupOisMapping']['comparison'] = ComparisonEnum::Equals;
-        $data['CoGroupOisMapping']['pattern'] = $sg['EntraSourceGroup']['mail_nickname'];
-        $data['CoGroupOisMapping']['co_group_id'] = $coGroupId;
-
-        $EntraSource->OrgIdentitySource->Co->CoGroup->CoGroupOisMapping->clear();
-        $EntraSource->OrgIdentitySource->Co->CoGroup->CoGroupOisMapping->save($data);
-
-        $this->log("Added CoGroupOisMapping for " . $data['CoGroupOisMapping']['pattern']);
-      }
     }
 
     foreach($sourceGroups as $g) {
@@ -428,21 +387,8 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
    */
 
   protected function inventoryOneSourceGroup($g) {
+    $this->log("inventoring source group " . $g['EntraSourceGroup']['mail_nickname']);
     $EntraSource = new EntraSource();
-
-    if(empty($g['EntraSourceGroup']['graph_id'])) {
-      // If the graph_id for the Entra group is not recorded yet
-      // exchange the mail_nickname for the graph_id.
-      $mailNickname = $g['EntraSourceGroup']['mail_nickname'];
-      $apiId = $this->sourceGroupApiIdByNickname($mailNickname);
-
-      // Update the source group with the api ID.
-      $EntraSource->EntraSourceGroup->clear();
-      $EntraSource->EntraSourceGroup->id = $g['EntraSourceGroup']['id'];
-      $EntraSource->EntraSourceGroup->saveField('graph_id', $apiId);
-    } else {
-      $apiId = $g['EntraSourceGroup']['graph_id'];
-    }
 
     // We use the paging functionality and loop until there are
     // no more transitive memberships to process.
@@ -450,7 +396,6 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
     $transitiveMembers = array();
 
     do {
-      $query = array();
 
       // Use the next link if there are still pages to read.
       // Otherwise start a new query.
@@ -459,14 +404,23 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
 
       if(!empty($nextLink)) {
         $urlPath = $nextLink;
+        $query = array();
       } else {
-        $urlPath = "groups/$apiId/transitiveMembers/microsoft.graph.user";
-        $query['$select'] = 'id';
-        $query['$top'] = '999';
+        $graphId = $g['EntraSourceGroup']['graph_id'];
+        $urlPath = "groups/$graphId/transitiveMembers/microsoft.graph.user";
+        $query = array(
+          '$select' => 'id',
+          '$top' => '999'
+        );
       }
 
-      $body = $this->apiRequest($urlPath, $query);
-      $this->log("Route $urlPath returned body " . print_r($body, true));
+      try {
+        $body = $this->apiRequest($urlPath, query: $query);
+      } catch (Exception $e){
+        $this->log("inventoryOneSourceGroup caught exception: " . print_r($e, true));
+        // Return to go onto the next source group.
+        return;
+      }
 
       if(!empty($body['value'])) {
         foreach($body['value'] as $o) {
@@ -505,36 +459,6 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
     return parent::log($prefix . $msg, $type, $scope);
   }
 
-  /**
-   * Use a source group mail nickname to find the Graph API ID
-   * for the source group.
-   *
-   * @since  COmanage Registry 4.4.0
-   * @param  String $mailNickname mail nickname for the source group
-   * @return String Graph API ID for the source group
-   */
-
-  protected function sourceGroupApiIdByNickname($mailNickname) {
-    $urlPath = "groups/";
-    $query = array(
-      '$filter' => "mailNickname eq '$mailNickname'"
-    );
-
-    $body = $this->apiRequest($urlPath, $query);
-
-    if(!empty($body['value'][0]['id'])) {
-      $apiId = $body['value'][0]['id'];
-    } else {
-      $msg = "Could not find graph ID for mailNickname $mailNickname";
-      $this->log($msg);
-      $this->log("Return body was " . print_r($body, true));
-
-      throw new RuntimeException($msg);
-    }
-
-    return $apiId;
-  }
-  
   /**
    * Convert a raw result, as from eg retrieve(), into an array of attributes that
    * can be used for group mapping.
@@ -646,165 +570,369 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
    */
   
   public function retrieve($id) {
+    $this->log("retrieve called with id $id");
+
+    // Refresh the access token if necessary.
     $this->apiConnect();
     $cfg = $this->getConfig();
-
-    $args = array();
-    $args['conditions']['EntraSourceRecord.entra_source_id'] = $cfg['id'];
-    $args['conditions']['EntraSourceRecord.graph_id'] = $id;
-    $args['contain'] = false;
-
-    $EntraSource = new EntraSource();
-
-    $record = $EntraSource->EntraSourceRecord->find('first', $args);
-
-    if(empty($record)) {
-      throw new InvalidArgumentException(_txt('er.notfound', array(_txt('fd.sorid'), $id)));
-    }
-
-    $this->log("Retrieved record " . print_r($record, true));
+    $entraSourceId = $cfg['id'];
 
     // Pull extension properties if any.
-    $args = array();
-    $args['conditions']['EntraSourceExtensionProperty.entra_source_id'] = $cfg['id'];
-    $args['contain'] = false;
+    $extensions = $this->getExtensionProperties();
 
-    $extensions = $EntraSource->EntraSourceExtensionProperty->find('all', $args);
+    // Query for the user record.
+    $urlPath = "users/$id";
 
-    // We use the paging functionaity of the users/delta route and
-    // loop until there are no more updates to process.
-    $done = false;
-
-    while(!$done) {
-      $query = array();
-
-      // Use the delta link if available to query for the next set of
-      // changes, or the next link if there are still pages to read.
-      // Otherwise start a new delta query.
-      //
-      // See https://learn.microsoft.com/en-us/graph/api/user-delta?view=graph-rest-1.0&tabs=http
-
-      if(!empty($record['EntraSourceRecord']['delta_next_link'])) {
-        $urlPath = $record['EntraSourceRecord']['delta_next_link'];
-      } elseif(!empty($record['EntraSourceRecord']['graph_next_link'])) {
-        $urlPath = $record['EntraSourceRecord']['graph_next_link'];
-      } else {
-        $urlPath = "users/delta";
-
-        // Use the select query parameter to request the specific set of properties
-        // to be returned.
-        $select = array('id', 'givenName', 'surname', 'mail', 'userPrincipalName');
-
-        // Include any extension properties also.
-        foreach($extensions as $e) {
-          $select[] = $e['EntraSourceExtensionProperty']['property'];
-        }
-
-        $query = array(
-          '$select' => implode(',', $select),
-          '$filter' => "id eq '$id'"
-        );
-      }
-
-      $body = $this->apiRequest($urlPath, $query);
-      $this->log("Route users/delta returned body " . print_r($body, true));
-
-      if(!empty($body['value'][0])) {
-        $EntraSource->EntraSourceRecord->clear();
-        $EntraSource->EntraSourceRecord->id = $record['EntraSourceRecord']['id'];
-
-        $sourceRecord = json_encode($body['value'][0]);
-        $EntraSource->EntraSourceRecord->saveField('source_record', $sourceRecord);
-        $record['EntraSourceRecord']['source_record'] = $sourceRecord;
-      } elseif(!empty($body['@odata.deltaLink'])) {
-        $done = true;
-      }
-
-      // Update nextLink or deltaLink
-      if(!empty($body['@odata.nextLink'])) {
-        $EntraSource->EntraSourceRecord->clear();
-        $EntraSource->EntraSourceRecord->id = $record['EntraSourceRecord']['id'];
-        $ret = $EntraSource->EntraSourceRecord->saveField('graph_next_link', $body['@odata.nextLink']);
-
-        $record['EntraSourceRecord']['graph_next_link'] = $body['@odata.nextLink'];
-      } elseif(!empty($body['@odata.deltaLink'])) {
-        $EntraSource->EntraSourceRecord->clear();
-        $EntraSource->EntraSourceRecord->id = $record['EntraSourceRecord']['id'];
-        $ret = $EntraSource->EntraSourceRecord->saveField('delta_next_link', $body['@odata.deltaLink']);
-        $ret = $EntraSource->EntraSourceRecord->saveField('graph_next_link', null);
-
-        $record['EntraSourceRecord']['delta_next_link'] = $body['@odata.deltaLink'];
-        $record['EntraSourceRecord']['graph_next_link'] = null;
-      }
+    $select = array('id', 'givenName', 'surname', 'mail', 'userPrincipalName');
+    foreach($extensions as $e) {
+      $select[] = $e['EntraSourceExtensionProperty']['property'];
     }
 
-    $raw = $record['EntraSourceRecord']['source_record'];
+    $query = array(
+      '$select' => implode(',', $select),
+    );
+
+    $body = $this->apiRequest($urlPath, query: $query);
+    $rawArray = $body;
+
+    // See if this source record is known and add if necessary.
+    $sourceRecordId = $this->addSourceRecord($id, $entraSourceId);
+
+    // Next get a filtered list of source group memberships for this record
+    // and synchronize EntraSourceGroupMemberships.
+    $this->synchronizeSourceGroups();
+    $transitiveMemberOf = $this->getFilteredSourceGroupsForSourceRecord($id);
+    $this->syncMembershipsSourceRecord($sourceRecordId, $transitiveMemberOf);
 
     // Compute an aritificial memberOf property and add it to
     // the raw record so that it can be used for managing
     // CoGroupMembers.
 
-    $args = array();
-    $args['conditions']['EntraSourceGroupMembership.entra_source_record_id'] = $record['EntraSourceRecord']['id'];
-    $args['contain'] = array('EntraSourceGroup');
+    $rawArray['memberOf'] = array();
 
-      $memberships = $EntraSource->EntraSourceRecord->EntraSourceGroupMembership->find('all', $args);
+    foreach($transitiveMemberOf as $m) {
+      $rawArray['memberOf'][] = $m['mailNickname'];
+    }
 
-      $rawArray = json_decode($raw, true, 512);
+    $raw = json_encode($rawArray);
 
-      $rawArray['memberOf'] = array();
+    // Compute the OrgIdentity from the raw record.
+    $orgId = $this->resultToOrgIdentity($raw, $extensions);
 
-      foreach($memberships as $m) {
-        $rawArray['memberOf'][] = $m['EntraSourceGroup']['mail_nickname'];
+    $this->log("retrieve is returning");
+
+    return array(
+      'raw' => $raw,
+      'orgidentity' => $orgId
+    );
+  }
+
+  /**
+   * Perform a search against the IdentitySource. The returned array should be of
+   * the form uniqueId => attributes, where uniqueId is a persistent identifier
+   * to obtain the same record and attributes represent an OrgIdentity, including
+   * related models.
+   *
+   * @since  COmanage Registry v2.0.0
+   * @param  Array $attributes Array in key/value format, where key is the same as returned by searchableAttributes()
+   * @return Array Array of search results, as specified
+   */
+
+  public function search($attributes) {
+    $this->log("search called with attributes " . print_r($attributes, true));
+
+    $mail = $attributes['mail'];
+
+    $ret = array();
+
+    // Refresh the access token if necessary.
+    $this->apiConnect();
+
+    // Query using the passed value for mail to find any candidate source records.
+    $urlPath = "/users";
+
+    $select = array('id', 'givenName', 'surname', 'mail', 'userPrincipalName');
+
+    $extensions = $this->getExtensionProperties();
+    foreach($extensions as $e) {
+      $select[] = $e['EntraSourceExtensionProperty']['property'];
+    }
+
+    $query = array(
+      '$select' => implode(',', $select),
+      '$filter'  => "mail eq '$mail'",
+    );
+
+    $headers = array('ConsistencyLevel' => 'eventual');
+
+    $body = $this->apiRequest($urlPath, query: $query, headers: $headers);
+
+    if(!empty($body['value'][0])) {
+      $candidate = $body['value'][0];
+    } else {
+      // No candidate found so return empty array.
+      return $ret;
+    }
+
+    // If we are using groups to determine our set of user source records
+    // then we need to determine if this candidate is in the set.
+    $cfg = $this->getConfig();
+
+    if($cfg['use_source_groups']) {
+      // First synchronize the source groups.
+      $this->synchronizeSourceGroups();
+
+      // Next get a filtered list of source group memberships.
+      $transitiveMemberOf = $this->getFilteredSourceGroupsForSourceRecord($candidate['id']);
+
+      // If the filtered list of source group memberships is empty then the
+      // candidate is not part of the set.
+      if(empty($transitiveMemberOf)) {
+        return $ret;
+      } 
+    } 
+
+    $candidateRaw = json_encode($candidate);
+      
+    $ret[$candidate['id']] = $this->resultToOrgIdentity($candidateRaw, $extensions);
+
+    $this->log("search is returning");
+
+    return $ret;
+  }
+
+  /**
+   * Generate the set of searchable attributes for the IdentitySource.
+   * The returned array should be of the form key => label, where key is meaningful
+   * to the IdentitySource (eg: a number or a field name) and label is the localized
+   * string to be displayed to the user.
+   *
+   * @since  COmanage Registry v2.0.0
+   * @return Array As specified
+   */
+  
+  public function searchableAttributes() {
+    return array(
+      'mail' => _txt('pl.entrasource.search.mail')
+    );
+  }
+
+  /**
+   * Synchronize the EntraSourceGroup objects.
+   *
+   * @since  COmanage Registry 4.4.0
+   */
+
+  protected function synchronizeSourceGroups() {
+    $cfg = $this->getConfig();
+
+    $EntraSource = new EntraSource();
+
+    // TODO Remove the assumption that we are using a source_group_filter.
+    $entraGroups = array();
+    $done = false;
+    $nextLink = null;
+
+    while(!$done) {
+      $query = array();
+
+      // Query for the list of groups using the configured query parameter, which will
+      // probably be a filter on mailNickname.
+      //
+      // See https://learn.microsoft.com/en-us/graph/api/group-list?view=graph-rest-1.0&tabs=http
+      if(!empty($nextLink)) {
+        $urlPath = $nextLink;
+        $query = array();
+      } else {
+        $urlPath = 'groups';
+        $query['$filter'] = $cfg['source_group_filter'];
+        $query['$select'] = 'id,mailNickname';
+        $query['$top'] = '999';
       }
 
-      $raw = json_encode($rawArray);
+      $body = $this->apiRequest($urlPath, query: $query);  
 
-      $orgId = $this->resultToOrgIdentity($raw, $extensions);
+      if(!empty($body['@odata.nextLink'])) {
+        $nextLink = $body['@odata.nextLink'];
+      } else {
+        $nextLink = null;
+        $done = true;
+      }
 
-      return array(
-        'raw' => $raw,
-        'orgidentity' => $orgId
-      );
+      if(!empty($body['value'])) {
+        foreach($body['value'] as $g) {
+          $entraGroups[$g['mailNickname']] =  $g['id'];
+        }
+      } else {
+        $done = true;
+      }
     }
 
-    /**
-     * Perform a search against the IdentitySource. The returned array should be of
-     * the form uniqueId => attributes, where uniqueId is a persistent identifier
-     * to obtain the same record and attributes represent an OrgIdentity, including
-     * related models.
-     *
-     * @since  COmanage Registry v2.0.0
-     * @param  Array $attributes Array in key/value format, where key is the same as returned by searchableAttributes()
-     * @return Array Array of search results, as specified
-     */
+    // TODO remove this hard-coded additional list of groups.
+    $entraGroups['nic-cluster-admins'] = '18acec66-005e-47f9-8685-c5a983bb8f13';
+    $entraGroups['nic-cluster-admins-tier1-admin'] = '8d00e1de-8f74-48b3-a626-1d3f8aff6675';
+    $entraGroups['nic-software-installer'] = '57efb1ea-cb40-424e-8c7d-6a89f23a26b7';
 
-    public function search($attributes) {
-      // TODO
+    // Synchronize the list of source groups. First make sure each group
+    // returned by the Graph API query is saved as an EntraSourceGroup object.
+    foreach($entraGroups as $mailNickname => $graphId) {
+      $args = array();
+
+      $args['conditions']['EntraSourceGroup.mail_nickname'] = $mailNickname;
+      $args['conditions']['EntraSourceGroup.entra_source_id'] = $cfg['id'];
+      $args['contain']= false;
+
+      $entraSourceGroup = $EntraSource->EntraSourceGroup->find('first', $args);
+      if(empty($entraSourceGroup)) {
+        $data = array();
+
+        $data['EntraSourceGroup']['entra_source_id'] = $cfg['id'];
+        $data['EntraSourceGroup']['mail_nickname'] = $mailNickname;
+        if(!empty($graphId)) {
+          $data['EntraSourceGroup']['graph_id'] = $graphId;
+        }
+
+        $EntraSource->EntraSourceGroup->clear();
+        $EntraSource->EntraSourceGroup->save($data);
+
+        $this->log("Added EntraSourceGroup with mailNickname $mailNickname");
+      }
     }
 
-    /**
-     * Generate the set of searchable attributes for the IdentitySource.
-     * The returned array should be of the form key => label, where key is meaningful
-     * to the IdentitySource (eg: a number or a field name) and label is the localized
-     * string to be displayed to the user.
-     *
-     * @since  COmanage Registry v2.0.0
-     * @return Array As specified
-     */
-    
-    public function searchableAttributes() {
-      return array();
+    // Now see if we need to delete any EntraSourceGroup objects.
+    $args = array();
+    $args['conditions']['EntraSourceGroup.entra_source_id'] = $cfg['id'];
+    $args['contain'] = false;
+
+    $sourceGroups = $EntraSource->EntraSourceGroup->find('all', $args);
+
+    foreach($sourceGroups as $g) {
+      if(!array_key_exists($g['EntraSourceGroup']['mail_nickname'], $entraGroups)) {
+        $EntraSource->EntraSourceGroup->clear();
+        $EntraSource->EntraSourceGroup->delete($g['EntraSourceGroup']['id']);
+
+        $this->log("Deleted EntraSourceGroup with mailNickname " . $g['EntraSourceGroup']['mail_nickname']);
+      }
     }
 
-    /**
-     * Synchronize a list of transitive members by Entra user ID with
-     * the EntraSourceGroupMembership objects.
-     *
-     * @since  COmanage Registry 4.4.0
-     * @param  Array $members Array where values are the Entra ID for users
-     * @param  Array $g EntraSourceGroup object
-     */
+    // Make sure we have a CO Group and a CoGroupOisMapping 
+    // for each EntraSourceGroup.
+    $args = array();
+    $args['conditions']['OrgIdentitySource.id'] = $cfg['org_identity_source_id'];
+    $args['contain'] = false;
+
+    $orgIdentitySource = $EntraSource->OrgIdentitySource->find('first', $args);
+
+    $coId = $orgIdentitySource['OrgIdentitySource']['co_id'];
+
+    foreach($sourceGroups as $sg) {
+      $args = array();
+      $args['conditions']['CoGroup.name'] = $sg['EntraSourceGroup']['mail_nickname'];
+      $args['conditions']['CoGroup.co_id'] = $coId;
+      $args['contain'] = array('CoGroupOisMapping');
+
+      $coGroup = $EntraSource->OrgIdentitySource->Co->CoGroup->find('first', $args);
+
+      if(empty($coGroup['CoGroup'])) {
+        $data= array();
+        $data['CoGroup']['co_id'] = $coId;
+        $data['CoGroup']['name'] = $sg['EntraSourceGroup']['mail_nickname'];
+        $data['CoGroup']['open'] = false;
+        $data['CoGroup']['status'] = SuspendableStatusEnum::Active;
+
+        $EntraSource->OrgIdentitySource->Co->CoGroup->clear();
+        $EntraSource->OrgIdentitySource->Co->CoGroup->save($data);
+
+        $this->log("Added CoGroup " . $data['CoGroup']['name']);
+
+        $coGroupId = $EntraSource->OrgIdentitySource->Co->CoGroup->id;
+      } else {
+        $coGroupId = $coGroup['CoGroup']['id'];
+      }
+
+      if(empty($coGroup['CoGroupOisMapping'])) {
+        $data= array();
+        $data['CoGroupOisMapping']['org_identity_source_id'] = $cfg['org_identity_source_id'];
+        $data['CoGroupOisMapping']['attribute'] = 'memberOf';
+        $data['CoGroupOisMapping']['comparison'] = ComparisonEnum::Equals;
+        $data['CoGroupOisMapping']['pattern'] = $sg['EntraSourceGroup']['mail_nickname'];
+        $data['CoGroupOisMapping']['co_group_id'] = $coGroupId;
+
+        $EntraSource->OrgIdentitySource->Co->CoGroup->CoGroupOisMapping->clear();
+        $EntraSource->OrgIdentitySource->Co->CoGroup->CoGroupOisMapping->save($data);
+
+        $this->log("Added CoGroupOisMapping for " . $data['CoGroupOisMapping']['pattern']);
+      }
+    }
+
+    return;
+  }
+
+  /**
+   * Synchronize the source group memberships for a single source record.
+   *
+   * @since  COmanage Registry 4.4.0
+   * @param  Integer $sourceRecordId EntraSourceRecord id
+   * @param  Array   $transitiveMemberOf list of arrays, each indexed by id, mailNickName, and entraSourceGroupId
+   * @return null
+   *
+   */
+
+  protected function syncMembershipsSourceRecord($sourceRecordId, $transitiveMemberOf) {
+    $EntraSource = new EntraSource();
+
+    // Loop over list of transitive memberships and add
+    // EntraSourceGroupMemberships as necessary.
+
+    // Record a list of EntraSourceGroup ids based on the input
+    // list of memberships.
+    $sourceGroupIds = array();
+
+    foreach($transitiveMemberOf as $m) {
+      $args = array();
+      $args['conditions']['EntraSourceGroupMembership.entra_source_record_id'] = $sourceRecordId;
+      $args['conditions']['EntraSourceGroupMembership.entra_source_group_id'] = $m['entraSourceGroupId'];
+      $args['contain'] = false;
+
+      $sgm = $EntraSource->EntraSourceRecord->EntraSourceGroupMembership->find('first', $args);
+
+      if(empty($sgm)) {
+        $data = array();
+        $data['EntraSourceGroupMembership']['entra_source_record_id'] = $sourceRecordId;
+        $data['EntraSourceGroupMembership']['entra_source_group_id'] = $m['entraSourceGroupId'];
+
+        $EntraSource->EntraSourceRecord->EntraSourceGroupMembership->clear();
+        $EntraSource->EntraSourceRecord->EntraSourceGroupMembership->save($data);
+        $this->log("Added EntraSourceGroupMembership " . print_r($data, true));
+      }
+
+      $sourceGroupIds[] = $m['entraSourceGroupId'];
+    }
+
+    // Next remove any EntraSourceGroupMemberships if necessary.
+    $args = array();
+    $args['conditions']['EntraSourceGroupMembership.entra_source_record_id'] = $sourceRecordId;
+    $args['contain'] = false;
+
+    $memberships = $EntraSource->EntraSourceRecord->EntraSourceGroupMembership->find('all', $args);
+
+    foreach($memberships as $m) {
+      if(!in_array($m['EntraSourceGroupMembership']['entra_source_group_id'], $sourceGroupIds)) {
+        $EntraSource->EntraSourceRecord->EntraSourceGroupMembership->clear();
+        $EntraSource->EntraSourceRecord->EntraSourceGroupMembership->delete($m['EntraSourceGroupMembership']['id']);
+        $this->log("Deleted EntraSourceGroupMembership " . print_r($m, true));
+      }
+    }
+  }
+
+  /**
+   * Synchronize a list of transitive members by Entra user ID with
+   * the EntraSourceGroupMembership objects.
+   *
+   * @since  COmanage Registry 4.4.0
+   * @param  Array $members Array where values are the Entra ID for users
+   * @param  Array $g EntraSourceGroup object
+   */
 
   protected function synchronizeTransitiveMembers($members, $g) {
     $entraSourceId = $g['EntraSourceGroup']['entra_source_id'];

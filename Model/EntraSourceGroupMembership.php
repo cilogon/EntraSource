@@ -29,6 +29,4 @@ class EntraSourceGroupMembership extends AppModel {
       'allowEmpty' => false
     )
   );
-
-
 }

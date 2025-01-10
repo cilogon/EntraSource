@@ -27,9 +27,10 @@ $cm_entra_source_texts['en_US'] = array(
   'pl.entrasource.access_token_server_id.desc' => 'The server consuming client credentials and issuing an access token',
   'pl.entrasource.api_server_id'               => 'Microsoft Graph API Server',
   'pl.entrasource.api_server_id.desc'          => 'The server configured for the Microsoft Graph API endpoint',
+  'pl.entrasource.search.mail'                 => 'Email address including domain',
+  'pl.entrasource.source_group_filter'         => 'Entra group filter query parameter',
+  'pl.entrasource.source_group_filter.desc'    => 'The OData V4 query language $filter query parameter value used to select the set of Entra groups',
   'pl.entrasource.use_source_groups'           => 'Select Using Groups',
   'pl.entrasource.use_source_groups.desc'      => 'Select the set of users using Entra groups',
-  'pl.entrasource.source_group_filter'         => 'Entra group filter query parameter',
-  'pl.entrasource.source_group_filter.desc'    => 'The OData V4 query language $filter query parameter value used to select the set of Entra groups'
 );
 

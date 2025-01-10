@@ -53,8 +53,6 @@
     </field>
     <field name="mail_nickname" type="C" size="128" />
     <field name="graph_id" type="C" size="128" />
-    <field name="graph_next_link" type="XL" />
-    <field name="delta_next_link" type="XL" />
     <field name="created" type="T" />
     <field name="modified" type="T" />
 
@@ -77,9 +75,6 @@
       <constraint>REFERENCES cm_entra_sources(id)</constraint>
     </field>
     <field name="graph_id" type="C" size="128" />
-    <field name="source_record" type="XL" />
-    <field name="graph_next_link" type="XL" />
-    <field name="delta_next_link" type="XL" />
     <field name="created" type="T" />
     <field name="modified" type="T" />
     

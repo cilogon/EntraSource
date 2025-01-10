@@ -26,23 +26,6 @@ class EntraSourceRecord extends AppModel {
       'rule' => 'notBlank',
       'required' => true,
       'allowEmpty' => false
-    ),
-    'source_record' => array(
-      'rule' => 'notBlank',
-      'required' => false,
-      'allowEmpty' => true
-    ),
-    'graph_next_link' => array(
-      'rule' => 'notBlank',
-      'required' => false,
-      'allowEmpty' => true
-    ),
-    'graph_delta_link' => array(
-      'rule' => 'notBlank',
-      'required' => false,
-      'allowEmpty' => true
     )
   );
-
-
 }

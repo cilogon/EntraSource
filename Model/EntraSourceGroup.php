@@ -1,7 +1,7 @@
 <?php
 
 class EntraSourceGroup extends AppModel {
-  // Define calss name for cake
+  // Define class name for cake
   public $name = "EntraSourceGroup";
 
   // Add behaviors
@@ -35,18 +35,6 @@ class EntraSourceGroup extends AppModel {
       'rule' => 'notBlank',
       'required' => false,
       'allowEmpty' => true
-    ),
-    'graph_next_link' => array(
-      'rule' => 'notBlank',
-      'required' => false,
-      'allowEmpty' => true
-    ),
-    'delta_next_link' => array(
-      'rule' => 'notBlank',
-      'required' => false,
-      'allowEmpty' => true
     )
   );
-
-
 }
