@@ -53,6 +53,16 @@ class EntraSource extends AppModel {
       'rule' => 'notBlank',
       'required' => false,
       'allowEmpty' => true
+    ),
+    'max_inventory_cache' => array(
+      'rule' => 'numeric',
+      'required' => false,
+      'allowEmpty' => true
+    ),
+    'inventory_cache_start' => array(
+      'rule' => 'validateTimestamp',
+      'required' => false,
+      'allowEmpty' => true
     )
   );
 

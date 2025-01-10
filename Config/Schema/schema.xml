@@ -20,6 +20,8 @@
     </field>
     <field name="use_source_groups" type="L" />
     <field name="source_group_filter" type="C" size="256" />
+    <field name="max_inventory_cache" type="I" />
+    <field name="inventory_cache_start" type="T" />
     <field name="created" type="T" />
     <field name="modified" type="T" />
 

@@ -298,12 +298,27 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
    */
   
   public function inventory() {
+    $cfg = $this->getConfig();
+
+    // If we are using source groups then deliver the inventory
+    // using the stored records if the cache is still valid
+    // as configured.
+    if($cfg['use_source_groups']) {
+      if($this->inventoryCacheValid()) {
+        $this->log("inventory cache is valid");
+        return $this->inventoryFromCache();
+      } else {
+        $this->log("inventory cache is invalid");
+      }
+    }
+
     $this->log("inventory called");
+
+    // Record the inventory start time.
+    $this->recordInventoryStart();
 
     // Refresh the access token if necessary.
     $this->apiConnect();
-
-    $cfg = $this->getConfig();
 
     if($cfg['use_source_groups']) {
       // If configured use group memberships to determine the inventory.
@@ -366,6 +381,47 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
     // At this point we have looped over all the source groups and so
     // we should have an up-to-date set of EntraSourceRecords, so query
     // to find them all.
+
+    return $this->inventoryFromCache();
+  }
+
+  /**
+   * Determine if the iventory cache is valid based on time.
+   *
+   * @since  COmanage Registry v4.4.0
+   * @return Boolean
+   */
+
+  protected function inventoryCacheValid() {
+    $cfg = $this->getConfig();
+
+    if(empty($cfg['inventory_cache_start'])) {
+      return false;
+    }
+
+    $now = new DateTime();
+
+    $lastInventoryStart = new DateTime($cfg['inventory_cache_start']);
+
+    // Add the configured number of minutes to the last inventory start time.
+    $lastInventoryStart->modify('+ ' . strval($cfg['max_inventory_cache']) . ' min');
+
+    // Return true if the last inventory start time plus the max cache age
+    // in minutes is in the future, meaning the cache is still valid.
+    return ($lastInventoryStart > $now);
+  }
+
+  /**
+   * Return inventory of source records using stored records.
+   *
+   * @since COmanage Registry v4.4.0
+   * @return Array As specified for inventory() method
+   */
+
+  protected function inventoryFromCache() {
+    $cfg = $this->getConfig();
+
+    $EntraSource = new EntraSource();
 
     $args = array();
     $args['fields'] = array('id', 'graph_id');
@@ -457,6 +513,22 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
     $prefix = "EntraSourceBackend ID " . $this->activeId . ": ";
 
     return parent::log($prefix . $msg, $type, $scope);
+  }
+
+  /**
+   * Record start time of inventory.
+   *
+   * @since  COmanage Registry v4.4.0
+   * @return null
+   */
+
+  protected function recordInventoryStart() {
+    $cfg = $this->getConfig();
+
+    $EntraSource = new EntraSource();
+
+    $EntraSource->id = $cfg['id'];
+    $EntraSource->saveField('inventory_cache_start', date('Y-m-d H:i:s'));
   }
 
   /**
@@ -577,6 +649,10 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
     $cfg = $this->getConfig();
     $entraSourceId = $cfg['id'];
 
+    // Always do an inventory first since we will use the cache
+    // if it is still valid.
+    $this->inventory();
+
     // Pull extension properties if any.
     $extensions = $this->getExtensionProperties();
 
@@ -595,24 +671,38 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
     $body = $this->apiRequest($urlPath, query: $query);
     $rawArray = $body;
 
+    // 
+
     // See if this source record is known and add if necessary.
     $sourceRecordId = $this->addSourceRecord($id, $entraSourceId);
 
     // Next get a filtered list of source group memberships for this record
     // and synchronize EntraSourceGroupMemberships.
-    $this->synchronizeSourceGroups();
-    $transitiveMemberOf = $this->getFilteredSourceGroupsForSourceRecord($id);
-    $this->syncMembershipsSourceRecord($sourceRecordId, $transitiveMemberOf);
+    //$this->synchronizeSourceGroups();
+    //$transitiveMemberOf = $this->getFilteredSourceGroupsForSourceRecord($id);
+    //$this->syncMembershipsSourceRecord($sourceRecordId, $transitiveMemberOf);
 
-    // Compute an aritificial memberOf property and add it to
+    $args = array();
+    $args['conditions']['EntraSourceGroupMembership.entra_source_record_id'] = $sourceRecordId;
+    $args['contain'] = 'EntraSourceGroup';
+
+    $EntraSource = new EntraSource();
+
+    $memberships = $EntraSource->EntraSourceRecord->EntraSourceGroupMembership->find('all', $args);
+
+    // Compute an artificial memberOf property and add it to
     // the raw record so that it can be used for managing
     // CoGroupMembers.
 
     $rawArray['memberOf'] = array();
 
-    foreach($transitiveMemberOf as $m) {
-      $rawArray['memberOf'][] = $m['mailNickname'];
+    foreach($memberships as $m) {
+      $rawArray['memberOf'][] = $m['EntraSourceGroup']['mail_nickname'];
     }
+
+    // Sort the memberships so that we present the same raw
+    // record when nothing has actually changed.
+    sort($rawArray['memberOf']);
 
     $raw = json_encode($rawArray);
 
