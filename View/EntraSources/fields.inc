@@ -148,6 +148,28 @@
     </div>
   </li>
 
+  <li>
+    <div class="field-name">
+      <div class="field-title">
+        <?php print _txt('pl.entrasource.max_inventory_cache'); ?><br />
+        <span class="descr"><?php print _txt('pl.entrasource.max_inventory_cache.desc'); ?></span>
+      </div>
+    </div>
+    <div class="field-info">
+      <?php
+        if($e) {
+          print $this->Form->input('max_inventory_cache');
+
+          if($this->Form->isFieldError('max_inventory_cache')) {
+            print $this->Form->error('max_inventory_cache');
+          }
+        } else {
+          print filter_var($entra_sources[0]['EntraSource']['max_inventory_cache'] , FILTER_SANITIZE_SPECIAL_CHARS);
+        }
+      ?>
+    </div>
+  </li>
+
 
   <?php if($e): ?>
   <li class="fields-submit">
