@@ -63,6 +63,11 @@ class EntraSource extends AppModel {
       'rule' => 'validateTimestamp',
       'required' => false,
       'allowEmpty' => true
+    ),
+    'unix_cluster_id' => array(
+      'rule' => 'numeric',
+      'required' => false,
+      'allowEmpty' => true
     )
   );
 

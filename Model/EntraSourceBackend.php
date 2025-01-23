@@ -4,6 +4,7 @@ App::uses('EntraSource', 'EntraSource.Model');
 App::uses('HttpSocket', 'Network/Http');
 App::uses('OrgIdentitySourceBackend', 'Model');
 App::uses('Server', 'Model');
+App::uses('UnixClusterGroup', 'UnixCluster.Model');
 
 class EntraSourceBackend extends OrgIdentitySourceBackend {
   public $name = "EntraSourceBackend";
@@ -938,9 +939,9 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
 
     $sourceGroups = $EntraSource->EntraSourceGroup->find('all', $args);
 
-    // Make sure we have a CO Group and a CoGroupOisMapping 
+    // Make sure we have a CO Group, CoGroupOisMapping, and UnixClusterGroup 
     // for each EntraSourceGroup and that the CO Group has an Identifier
-    // with the gidNumber type.
+    // with the gidNumber type and the uid type.
     $args = array();
     $args['conditions']['OrgIdentitySource.id'] = $cfg['org_identity_source_id'];
     $args['contain'] = false;
@@ -962,6 +963,7 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
         $data['CoGroup']['co_id'] = $coId;
         $data['CoGroup']['name'] = $sg['EntraSourceGroup']['mail_nickname'];
         $data['CoGroup']['open'] = false;
+        $data['CoGroup']['group_type'] = GroupEnum::Clusters;
         $data['CoGroup']['status'] = SuspendableStatusEnum::Active;
 
         $EntraSource->OrgIdentitySource->Co->CoGroup->clear();
@@ -974,8 +976,28 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
         $coGroupId = $coGroup['CoGroup']['id'];
       }
 
+      $UnixClusterGroup = new UnixClusterGroup();
+
+      $args = array();
+      $args['conditions']['UnixClusterGroup.co_group_id'] = $coGroupId;
+      $args['conditions']['UnixClusterGroup.unix_cluster_id'] = $cfg['unix_cluster_id'];
+      $args['contain'] = false;
+
+      $unixClusterGroup = $UnixClusterGroup->find('first', $args);
+
+      if(empty($unixClusterGroup)) {
+        $data = array();
+        $data['UnixClusterGroup']['co_group_id'] = $coGroupId;
+        $data['UnixClusterGroup']['unix_cluster_id'] = $cfg['unix_cluster_id'];
+
+        $UnixClusterGroup->clear();
+        $UnixClusterGroup->save($data);
+
+        $this->log("Added UnixClusterGroup for " . $sg['EntraSourceGroup']['mail_nickname']);
+      }
+
       if(empty($coGroup['CoGroupOisMapping'])) {
-        $data= array();
+        $data = array();
         $data['CoGroupOisMapping']['org_identity_source_id'] = $cfg['org_identity_source_id'];
         $data['CoGroupOisMapping']['attribute'] = 'memberOf';
         $data['CoGroupOisMapping']['comparison'] = ComparisonEnum::Equals;
@@ -988,6 +1010,39 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
         $this->log("Added CoGroupOisMapping for " . $data['CoGroupOisMapping']['pattern']);
       }
 
+      // TODO remove assumptions here.
+      // Add an Identifier of type uid.
+      $args = array();
+
+      $args['conditions']['Identifier.co_group_id'] = $coGroupId;
+      $args['conditions']['Identifier.type'] = 'uid';
+      $args['conditions']['Identifier.status'] = SuspendableStatusEnum::Active;
+      $args['contain'] = false;
+
+      $identifier = $EntraSource->OrgIdentitySource->Co->CoGroup->Identifier->find('first', $args);
+
+      if(empty($identifier) || ($identifier['Identifier']['identifier'] != $sg['EntraSourceGroup']['mail_nickname'])) {
+        $data = array();
+
+        $data['Identifier']['identifier'] = $sg['EntraSourceGroup']['mail_nickname'];
+        $data['Identifier']['type'] = 'uid';
+        $data['Identifier']['login'] = false;
+        $data['Identifier']['status'] = SuspendableStatusEnum::Active;
+        $data['Identifier']['co_group_id'] = $coGroupId;
+
+        if(!empty($identifier['Identifier']['id'])) {
+          $data['Identifier']['id'] = $identifier['Identifier']['id'];
+          $msg = "Updated Identifier of type uid for CoGroup " . $sg['EntraSourceGroup']['mail_nickname'];
+        } else {
+          $msg = "Added Identifier of type uid for CoGroup " . $sg['EntraSourceGroup']['mail_nickname'];
+        }
+
+        $EntraSource->OrgIdentitySource->Co->CoGroup->Identifier->clear();
+        $EntraSource->OrgIdentitySource->Co->CoGroup->Identifier->save($data, array('validate' => false));
+
+        $this->log($msg);
+      }
+
       // Go onto the next EntraSourceGroup if this one does not have a
       // gidnumber.
       if(empty($sg['EntraSourceGroup']['gidnumber'])) {
@@ -996,6 +1051,7 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
 
       // TODO remove assumptions here about Identifier and even the
       // need for an Identifier.
+      // Add an Identifier of type gidnumber.
       $args = array();
 
       $args['conditions']['Identifier.co_group_id'] = $coGroupId;
