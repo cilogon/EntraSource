@@ -35,6 +35,11 @@ class EntraSourceGroup extends AppModel {
       'rule' => 'notBlank',
       'required' => false,
       'allowEmpty' => true
+    ),
+    'gidnumber' => array(
+      'rule' => 'notBlank',
+      'required' => false,
+      'allowEmpty' => true
     )
   );
 }

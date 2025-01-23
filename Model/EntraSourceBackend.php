@@ -836,7 +836,8 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
       } else {
         $urlPath = 'groups';
         $query['$filter'] = $cfg['source_group_filter'];
-        $query['$select'] = 'id,mailNickname';
+        // TODO remove hardcoded extension for gidNumber.
+        $query['$select'] = 'id,mailNickname,extension_c5a01f20b34f469fad2518bfb66e7107_gidNumber';
         $query['$top'] = '999';
       }
 
@@ -851,7 +852,10 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
 
       if(!empty($body['value'])) {
         foreach($body['value'] as $g) {
-          $entraGroups[$g['mailNickname']] =  $g['id'];
+          $entraGroups[$g['mailNickname']] =  array('id' => $g['id']);
+          if(!empty($g['extension_c5a01f20b34f469fad2518bfb66e7107_gidNumber'])) {
+            $entraGroups[$g['mailNickname']]['gidNumber'] = $g['extension_c5a01f20b34f469fad2518bfb66e7107_gidNumber'];
+          }
         }
       } else {
         $done = true;
@@ -859,13 +863,25 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
     }
 
     // TODO remove this hard-coded additional list of groups.
-    $entraGroups['nic-cluster-admins'] = '18acec66-005e-47f9-8685-c5a983bb8f13';
-    $entraGroups['nic-cluster-admins-tier1-admin'] = '8d00e1de-8f74-48b3-a626-1d3f8aff6675';
-    $entraGroups['nic-software-installer'] = '57efb1ea-cb40-424e-8c7d-6a89f23a26b7';
+    $entraGroups['nic-cluster-admins'] = array(
+      'id' => '18acec66-005e-47f9-8685-c5a983bb8f13',
+      'gidNumber' => 647975
+      );
+    $entraGroups['nic-cluster-admins-tier1-admin'] = array(
+      'id' => '8d00e1de-8f74-48b3-a626-1d3f8aff6675',
+      'gidNumber' => 100494552
+      );
+    $entraGroups['nic-software-installer'] = array(
+      'id' => '57efb1ea-cb40-424e-8c7d-6a89f23a26b7',
+      'gidNumber' => 100385889
+      );
 
     // Synchronize the list of source groups. First make sure each group
     // returned by the Graph API query is saved as an EntraSourceGroup object.
-    foreach($entraGroups as $mailNickname => $graphId) {
+    foreach($entraGroups as $mailNickname => $a) {
+      $graphId = $a['id'] ?? null;
+      $gidNumber = $a['gidNumber'] ?? null;
+
       $args = array();
 
       $args['conditions']['EntraSourceGroup.mail_nickname'] = $mailNickname;
@@ -873,23 +889,33 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
       $args['contain']= false;
 
       $entraSourceGroup = $EntraSource->EntraSourceGroup->find('first', $args);
+
+      $data = array();
+
+      $data['EntraSourceGroup']['entra_source_id'] = $cfg['id'];
+      $data['EntraSourceGroup']['mail_nickname'] = $mailNickname;
+      if(!empty($graphId)) {
+        $data['EntraSourceGroup']['graph_id'] = $graphId;
+      }
+      if(!empty($gidNumber)) {
+        $data['EntraSourceGroup']['gidnumber'] = $gidNumber;
+      }
+
       if(empty($entraSourceGroup)) {
-        $data = array();
-
-        $data['EntraSourceGroup']['entra_source_id'] = $cfg['id'];
-        $data['EntraSourceGroup']['mail_nickname'] = $mailNickname;
-        if(!empty($graphId)) {
-          $data['EntraSourceGroup']['graph_id'] = $graphId;
-        }
-
         $EntraSource->EntraSourceGroup->clear();
         $EntraSource->EntraSourceGroup->save($data);
-
         $this->log("Added EntraSourceGroup with mailNickname $mailNickname");
+      } elseif(empty($entraSourceGroup['EntraSourceGroup']['graph_id']) ||
+               empty($entraSourceGroup['EntraSourceGroup']['gidnumber'])) {
+        $data['EntraSourceGroup']['id'] = $entraSourceGroup['EntraSourceGroup']['id'];
+        $EntraSource->EntraSourceGroup->clear();
+        $EntraSource->EntraSourceGroup->save($data);
+        $this->log("Updated EntraSourceGroup with mailNickname $mailNickname");
       }
     }
 
     // Now see if we need to delete any EntraSourceGroup objects.
+    // We purposely do not delete related CoGroup objects at this time.
     $args = array();
     $args['conditions']['EntraSourceGroup.entra_source_id'] = $cfg['id'];
     $args['contain'] = false;
@@ -905,8 +931,16 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
       }
     }
 
+    // Now that we are reconciled pull the existing EntraSourceGroups again.
+    $args = array();
+    $args['conditions']['EntraSourceGroup.entra_source_id'] = $cfg['id'];
+    $args['contain'] = false;
+
+    $sourceGroups = $EntraSource->EntraSourceGroup->find('all', $args);
+
     // Make sure we have a CO Group and a CoGroupOisMapping 
-    // for each EntraSourceGroup.
+    // for each EntraSourceGroup and that the CO Group has an Identifier
+    // with the gidNumber type.
     $args = array();
     $args['conditions']['OrgIdentitySource.id'] = $cfg['org_identity_source_id'];
     $args['contain'] = false;
@@ -919,7 +953,7 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
       $args = array();
       $args['conditions']['CoGroup.name'] = $sg['EntraSourceGroup']['mail_nickname'];
       $args['conditions']['CoGroup.co_id'] = $coId;
-      $args['contain'] = array('CoGroupOisMapping');
+      $args['contain'] = array('CoGroupOisMapping', 'Identifier');
 
       $coGroup = $EntraSource->OrgIdentitySource->Co->CoGroup->find('first', $args);
 
@@ -953,6 +987,46 @@ class EntraSourceBackend extends OrgIdentitySourceBackend {
 
         $this->log("Added CoGroupOisMapping for " . $data['CoGroupOisMapping']['pattern']);
       }
+
+      // Go onto the next EntraSourceGroup if this one does not have a
+      // gidnumber.
+      if(empty($sg['EntraSourceGroup']['gidnumber'])) {
+        continue;
+      }
+
+      // TODO remove assumptions here about Identifier and even the
+      // need for an Identifier.
+      $args = array();
+
+      $args['conditions']['Identifier.co_group_id'] = $coGroupId;
+      $args['conditions']['Identifier.type'] = 'gidnumber';
+      $args['conditions']['Identifier.status'] = SuspendableStatusEnum::Active;
+      $args['contain'] = false;
+
+      $identifier = $EntraSource->OrgIdentitySource->Co->CoGroup->Identifier->find('first', $args);
+
+      if(empty($identifier) || ($identifier['Identifier']['identifier'] != strval($sg['EntraSourceGroup']['gidnumber']))) {
+        $data = array();
+
+        $data['Identifier']['identifier'] = strval($sg['EntraSourceGroup']['gidnumber']);
+        $data['Identifier']['type'] = 'gidnumber';
+        $data['Identifier']['login'] = false;
+        $data['Identifier']['status'] = SuspendableStatusEnum::Active;
+        $data['Identifier']['co_group_id'] = $coGroupId;
+
+        if(!empty($identifier['Identifier']['id'])) {
+          $data['Identifier']['id'] = $identifier['Identifier']['id'];
+          $msg = "Updated Identifier for CoGroup " . $sg['EntraSourceGroup']['mail_nickname'];
+        } else {
+          $msg = "Added Identifier for CoGroup " . $sg['EntraSourceGroup']['mail_nickname'];
+        }
+
+        $EntraSource->OrgIdentitySource->Co->CoGroup->Identifier->clear();
+        $EntraSource->OrgIdentitySource->Co->CoGroup->Identifier->save($data, array('validate' => false));
+
+        $this->log($msg);
+      }
+
     }
 
     return;
