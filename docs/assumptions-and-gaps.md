@@ -156,8 +156,12 @@ from Entra and Microsoft Graph, see [Entra contract](entra-contract.md).
   Neither is true of the code.
 - **What you see:** A user who leaves every source group stays in the inventory. Their
   Org Identity remains, and the next retrieve shows an empty `memberOf`, so the group
-  mapping takes them out of the CO Groups.
-- **Where:** `synchronizeTransitiveMembers()` and `addSourceRecord()` (no TODO).
+  mapping takes them out of the CO Groups. The same holds for any user fetched by
+  `retrieve()`: it calls `addSourceRecord()` for the user it reads, so a user retrieved
+  once (for example after a search) stays in later inventories even if they are in no
+  source group.
+- **Where:** `synchronizeTransitiveMembers()`, `retrieve()`, and `addSourceRecord()`
+  (no TODO).
 
 ### CO Groups are kept when a source group disappears
 
