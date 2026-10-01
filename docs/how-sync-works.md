@@ -95,7 +95,7 @@ inventory.
 If the cache is not valid (or "use source groups" is off), `inventory()`:
 
 1. Calls `recordInventoryStart()` to set `inventory_cache_start` to now.
-2. Refreshes the Graph access token if needed (`apiConnect()`).
+2. Loads the configured server records (`apiConnect()`). The access token is obtained or refreshed when each Graph request is made (`apiRequest()`).
 3. Calls `inventoryBySourceGroups()` if "use source groups" is on, otherwise
    `inventoryAllUsers()`.
 
@@ -151,7 +151,7 @@ After all groups are processed, `inventoryBySourceGroups()` returns
 
 The Registry calls `retrieve($id)` with an Entra user object id. `retrieve()`:
 
-1. Refreshes the access token if needed.
+1. Loads the configured server records (`apiConnect()`).
 2. Calls `inventory()`. If the cache window has not expired, this returns at once from
    the stored tables. If it has expired, a full inventory runs inside this retrieve.
 3. Reads the user from Graph by object id, asking for `id`, `givenName`, `surname`,
