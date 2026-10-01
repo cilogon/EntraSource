@@ -1,85 +1,35 @@
 # EntraSource Plugin
-## COmanage Registry Organizational Identity Source (OIS) Plugin
 
-### Models
+EntraSource is an Organizational Identity Source (OIS) plugin for COmanage Registry 4.x.
+It reads users and groups from Microsoft Entra through the Microsoft Graph API and makes
+them available to the Registry as Organizational Identities. For each Entra source group
+it also creates a CO Group, a Unix cluster group, and the group mapping that places
+members into that CO Group.
 
-- EntraSource: primary plugin model
+## Who the documentation is for
 
-- EntraSourceExtensionProperty: represents schema extension properties
-that may be defined by an organization to enhance the default Microsoft
-Entra user account, such as uidNumber, gidNumber, and primaryCampus.
+The pages under `docs/` are written for CILogon staff who operate the Registry and
+administer the CO that uses this plugin. They describe the plugin as the code behaves
+today, including the values hardcoded for the University of Missouri deployment. A
+developer guide covers the internals for whoever maintains the plugin.
 
-- EntraSourceRecord: represents a user account in Entra, indexed by the
-```graph_id```.
+## Documentation
 
-- EntraSourceGroup: represents a collection of Entra user accounts and the
-group resource type in Entra.
+- [How sync works](docs/how-sync-works.md): how Entra groups and users become Org
+  Identities and CO Group memberships, what the plugin stores, and when changes in
+  Entra show up in the Registry.
+- [Configuration](docs/configuration.md): every setting on an EntraSource and its
+  extension properties, and the Registry server records and Unix Cluster it needs.
+- [Troubleshooting](docs/troubleshooting.md): step-by-step diagnosis for a user missing
+  from the Registry, missing from a CO Group, or not provisioned to LDAP or DynamoDB.
+- [Entra contract](docs/entra-contract.md): every Microsoft Graph call, permission,
+  and attribute the plugin depends on, and what changes in the Registry if Entra
+  changes.
+- [Assumptions and known gaps](docs/assumptions-and-gaps.md): Missouri-specific values
+  in the code, and unfinished or surprising behavior.
+- [Developer guide](docs/developer-guide.md): data model, backend organization, the
+  Graph client, log messages, and open TODOs.
 
-- EntraSourceGroupMembership: tracks the membership of an Entra user account
-in an Entra group resource.
+## See also
 
-- EntraSourceBackend: class that extends the Registry OrgIdentitySourceBackend
-class and where most of the logic for the plugin is located.
-
-
-### Interfaces
-
-See the COmanage Registry 
-[Organizational Identity Source Plugins](https://spaces.at.internet2.edu/display/COmanage/Organizational+Identity+Source+Plugins)
-documentation for details on the requirements for these interfaces:
-
-- ```inventory()```: Returns all available records. Since the set of users
-   may be defined in terms of group memberships, and since querying for the
-   groups and group memberships is expensive, a cache is used. See the
-   section below on caching.
-
-   Two logic paths are used for inventory, one when the set of users is
-   defined by membership in a list or collection of groups, and one when
-   all users known to Entra are inventoried.
-
-   - Inventory by source groups uses the
-     [group-list](https://learn.microsoft.com/en-us/graph/api/group-list?view=graph-rest-1.0&tabs=http)
-     endpoint with a filter that defines the set of groups to include, 
-     for example ```startswith(mailNickname, 'rss-')```.
-
-     Returned objects are synchronized with EntraSourceGroup objects. A CO
-     Group, CoGroupOisMapping, and UnixClusterGroup object is created
-     corresponding to each Entra source group. 
-
-     The name of each CO Group object is the name of the Entra group.
-     Identifier objects attached carry the gidNumber for the group and
-     UID that will be used when provisioning as a posixGroup in LDAP.
-
-   - After the list of source groups is synchronized the list of
-     groups is looped over and the transitive members for each group
-     synchronized with the EntraSourceGroupMembership objects. When necessary
-     a new EntraSourceRecord is created to represent a user record. Records
-     are also deleted when no longer part of any group.
-
-
-
-
-
-- ```retrieve()```:
-
-- ```groupableAttributes()```: 
-
-- ```resultToGroups()```:
-
-
-- ```search()```:
-
-- ```searchableAttributes()```:
-
-
-
-
-   
-
-
-
-### Caching
-
-
-### Credentials
-
+- [COmanage Registry Organizational Identity Source Plugins](https://spaces.at.internet2.edu/display/COmanage/Organizational+Identity+Source+Plugins)
