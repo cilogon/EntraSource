@@ -33,3 +33,6 @@ developer guide covers the internals for whoever maintains the plugin.
 ## See also
 
 - [COmanage Registry Organizational Identity Source Plugins](https://spaces.at.internet2.edu/display/COmanage/Organizational+Identity+Source+Plugins)
+- [ITRSS solution architecture overview](https://github.com/cilogon/itrss-policies/blob/main/ITRSS-Solution-Architecture.md):
+  how EntraSource fits with the other ITRSS Registry plugins and services. The overview
+  is in a private repository for ITRSS and CILogon staff.
