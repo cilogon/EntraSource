@@ -12,7 +12,7 @@ controller (MVC) framework.
 The plugin inventories and retrieves user accounts and groups from Microsoft
 Entra (via the Microsoft Graph API) so they can be synchronized into Registry
 as Organizational Identities, CO Groups, and Unix cluster groups. See
-`README.md` for the models and the OIS interfaces the backend implements.
+`README.md` for the documentation index; the pages live under `docs/`.
 
 ## Directory and File Structure & Key Details
 - `Config/Schema/schema.xml`: database table definitions in AdoDb XML format.
@@ -24,6 +24,10 @@ as Organizational Identities, CO Groups, and Unix cluster groups. See
   logic, including the calls to the Microsoft Graph API.
 - `View`: view files used in the MVC framework, following the Registry
   conventions (a single `fields.inc` used as the template for add and edit).
+- `docs`: documentation for CILogon staff and maintainers (sync behavior,
+  configuration, troubleshooting, Entra contract, assumptions and gaps,
+  developer guide), indexed from `README.md`. `docs/plans/` holds planning
+  artifacts and is not part of the user-facing set.
 
 ## Coding Style & Conventions
 - Language: PHP version 8.3 is preferred.
@@ -44,6 +48,15 @@ as Organizational Identities, CO Groups, and Unix cluster groups. See
 ## Do's & Don'ts
 - Do: Respect existing code style and patterns but suggest alternatives
   that provide generally cleaner and more maintainable code.
+- Do: When a change alters plugin behavior, update the affected `docs/` pages
+  in the same pull request. Cite code by file and function name, not line
+  number. Keep each fact on the page that owns it (Missouri-specific values in
+  `docs/assumptions-and-gaps.md`, Graph calls and permissions in
+  `docs/entra-contract.md`, sync timing and created objects in
+  `docs/how-sync-works.md`, field meanings in `docs/configuration.md`, log
+  messages in `docs/developer-guide.md`) and link to it from elsewhere.
+- Don't: Put hostnames, credentials, or the names of Missouri pipeline or
+  provisioner configurations in `docs/`; the repository is public.
 - Don't: Introduce new dependencies without approval.
 - Don't: Commit credentials, tenant IDs, or client secrets.
 
