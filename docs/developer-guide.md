@@ -95,8 +95,8 @@ plugin knows about, written by `addSourceRecord()`:
 
 No code deletes rows from this table except the cascade when an EntraSource is deleted
 (see [Source records are never removed](assumptions-and-gaps.md#source-records-are-never-removed)).
-The current `README.md` says records are deleted when no longer part of any group; that
-is not what the code does.
+The previous version of `README.md` said records are deleted when no longer part of any
+group; that is not what the code does.
 
 **`entra_source_group_memberships`, model `EntraSourceGroupMembership`.** One row per
 (source group, source record) pair, written and deleted by
@@ -152,8 +152,9 @@ CakePHP's `delete()` cascades by default, so deleting an EntraSourceGroup (as
 - The `add.ctp` and `edit.ctp` files are symlinks to
   `../../../../../app/View/Standard/add.ctp` and `edit.ctp`. Following the Registry
   convention, the standard template renders the plugin's `fields.inc`. The links resolve
-  only when the plugin is installed five levels below the Registry root (for example
-  `local/Plugin/EntraSource/`); in a standalone checkout they dangle.
+  only when the plugin is installed three levels below the Registry root (for example
+  `local/Plugin/EntraSource/`, so each `View/<Controller>/` directory sits five levels
+  down); in a standalone checkout they dangle.
 - **`Lib/lang.php`**: every user-facing string. Keys start with `ct.` (titles), `er.`
   (errors), or `pl.` (form labels and descriptions). The Registry merges
   `$cm_entra_source_texts` into its own strings. Add new strings here, not in

@@ -151,9 +151,9 @@ from Entra and Microsoft Graph, see [Entra contract](entra-contract.md).
 - **What the code does:** When a user is no longer a transitive member of a source group,
   the plugin deletes that EntraSourceGroupMembership. It never deletes the
   EntraSourceRecord, even when the user is in no source group at all. The docblock of
-  `inventoryOneSourceGroup()` says records are created "(or remove[d])", and the current
-  `README.md` says records are deleted when they are no longer part of any group.
-  Neither is true of the code.
+  `inventoryOneSourceGroup()` says records are created "(or remove[d])", and the previous
+  version of `README.md` said records are deleted when they are no longer part of any
+  group. Neither is true of the code.
 - **What you see:** A user who leaves every source group stays in the inventory. Their
   Org Identity remains, and the next retrieve shows an empty `memberOf`, so the group
   mapping takes them out of the CO Groups. The same holds for any user fetched by

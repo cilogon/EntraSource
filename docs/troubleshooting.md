@@ -141,8 +141,11 @@ Symptom: no Org Identity from the EntraSource source for the user, or no CO Pers
    ([CO Groups are kept when a source group disappears](assumptions-and-gaps.md#co-groups-are-kept-when-a-source-group-disappears)).
 
 7. **Plugin: does retrieve fail for this user?** The Registry creates the Org Identity by
-   calling retrieve with the user's object id. Retrieve fails for every user if a
-   configured Schema Extension Property name is wrong, and for one user if that Entra
+   calling retrieve with the user's object id. If a configured Schema Extension
+   Property name is wrong, Graph may reject the request for every user or may silently
+   leave the property out (not settled; see
+   [What Graph does with an unknown extension name](entra-contract.md#what-graph-does-with-an-unknown-extension-name)).
+   Retrieve fails for one user if that Entra
    object was deleted (for example, deleted and recreated, which gives a new object id).
    The failure appears in the sync job history and in the Registry error log. See
    [User attributes](entra-contract.md#user-attributes) and
