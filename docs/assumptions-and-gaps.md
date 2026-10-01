@@ -190,7 +190,7 @@ These are not Missouri-specific. They are fixed in the code and cannot be config
 | Value | Effect | Where |
 | ----- | ------ | ----- |
 | Token renewal 10 seconds before expiry | Fetches a new client-credentials token if the current one expires within 10 seconds | `apiRequest()` |
-| 5-second retry wait | Wait used after HTTP 429 if the `Retry-After` header cannot be read | `apiRequest()` |
+| 5-second retry wait | Wait used after HTTP 429 only if reading the `Retry-After` header throws; a missing header reads as 0, so the retry is immediate | `apiRequest()` |
 | `$top=999` | Page size for group lists, group members, and a user's group memberships | `synchronizeSourceGroups()`, `inventoryOneSourceGroup()`, `getFilteredSourceGroupsForSourceRecord()` |
 | `ConsistencyLevel: eventual` | Header sent on the user search by `mail` | `search()` |
 | CO Group type `Clusters`, not open | Type and open setting of every CO Group the plugin creates | `synchronizeSourceGroups()` |
